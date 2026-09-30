@@ -73,6 +73,17 @@ def evidence_csv(packet: dict) -> str:
     ids = packet["interview_ids"]
     buf = io.StringIO()
     w = csv.writer(buf)
+    if packet.get("mode") == "role":
+        w.writerow(["Note", "No historical interview transcripts supplied; no candidate-level occurrence data exists."])
+        w.writerow([])
+        w.writerow(["Expected topic", "Priority (stars)", "Basis", "Occurrence"])
+        for t in packet["topics"]:
+            w.writerow([t["name"], t["stars"], t["basis"], "not observed"])
+        w.writerow([])
+        w.writerow(["Likely question", "Priority (stars)", "Why", "Occurrence"])
+        for q in packet["questions"]:
+            w.writerow([q["text"], q["stars"], q["why"], "not observed"])
+        return buf.getvalue()
     w.writerow(["Topic"] + [f"Candidate {i + 1}" for i in range(len(ids))] + ["Occurrence"])
     for t in packet["topics"]:
         w.writerow([t["name"]] + ["Yes" if iid in t["ids"] else "No" for iid in ids]
@@ -85,7 +96,45 @@ def evidence_csv(packet: dict) -> str:
     return buf.getvalue()
 
 
+def _role_methodology(packet: dict, checks: list[dict], fixes: list[str]) -> str:
+    m = packet["meta"]
+    L = [
+        "INTERVIEW INTELLIGENCE PACKET - METHODOLOGY AND NOTES",
+        f"Company: {packet['company']}",
+        f"Designation: {packet['designation']} (as entered by the user)",
+        f"Target round: {packet['target_round']}",
+        f"Generated: {m['generated']}   Model: {m.get('model', 'unknown')}",
+        "Rules source: prompt.txt (sent unmodified), plus role-based mode instructions",
+        "",
+        "MODE: ROLE-BASED (no historical interview transcripts supplied)",
+        "Number of transcript files supplied: 0",
+        "Number of unique candidates / interview rounds: 0",
+        "Frequency denominator used: none - no interviews were analyzed, so no counts,",
+        "  frequencies or percentages appear anywhere in the packet.",
+        f"Packet based on: {packet['source_label']}.",
+        f"JD supplied: {'Yes - ' + m['jd_file'] if m.get('jd_file') else 'No'}",
+        f"Resume supplied: {'Yes - ' + m['resume_file'] if m.get('resume_file') else 'No'}",
+        "Chronological trend analysis possible: No (no interview data).",
+        "",
+        "All topics, questions and priorities are expectations for this designation and round,",
+        "not observations. Upload real interview transcripts for evidence-based counts.",
+    ]
+    if m.get("rejected_files"):
+        L.append("Files that could not be read:")
+        L += [f"  {n}: {r}" for n, r in m["rejected_files"]]
+    L += ["", "Expected topics and basis:"]
+    L += [f"  [{t['stars']}/5] {t['name']} - {t['basis']}" for t in packet["topics"]]
+    if m.get("notes"):
+        L += ["", "Notes and caveats:"] + [f"  - {x}" for x in m["notes"]]
+    L += ["", "Quality checks on the final PDF:"]
+    L += [f"  [{'PASS' if c['passed'] else 'FAIL'}] {c['check']} - {c['detail']}" for c in checks]
+    L += [f"  {f}" for f in fixes]
+    return "\n".join(L) + "\n"
+
+
 def methodology(packet: dict, checks: list[dict], fixes: list[str]) -> str:
+    if packet.get("mode") == "role":
+        return _role_methodology(packet, checks, fixes)
     m, n = packet["meta"], packet["n"]
     L = []
     add = L.append

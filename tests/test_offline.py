@@ -32,6 +32,9 @@ class FakeLLM:
                                    "topic": "Project", "kind": "project_deep_dive", "follow_up_count": 3,
                                    "depth": "high", "evidence": "walk me through your project"}],
                     "experience_probes": ["exact contribution"], "round_evidence": "", "date_evidence": ""}
+        if name == "role_based_packet":
+            assert "ROLE-BASED MODE" in system and "NOT PROVIDED" in user
+            return ROLE_RESPONSE
         ids = json.loads(user)["interview_ids"]
         occ = lambda k: [{"interview_id": i, "evidence": "asked"} for i in ids[:k]]
         return {
@@ -102,6 +105,57 @@ class FakeLLM:
         }
 
 
+ROLE_RESPONSE = {
+    "topics": [{"name": n, "stars": st, "basis": "role"} for n, st in [
+        ("Current ML project deep dive and ownership", 5), ("Production ML: deploy, monitor, debug", 5),
+        ("LLM / RAG system design", 4), ("Model evaluation and metrics", 4),
+        ("Coding / DSA fundamentals", 4), ("Behavioral: collaboration, ownership", 3)]],
+    "top_questions": [{"question": q, "stars": st, "why_prioritized": "role"} for q, st in [
+        ("Walk me through your most recent ML project end to end.", 5),
+        ("How would you take this model from notebook to production?", 5),
+        ("Design a RAG system for internal documents.", 4),
+        ("How do you choose evaluation metrics for an imbalanced problem?", 4),
+        ("Tell me about a time a model failed in production.", 3)]],
+    "resume_focus": [{"area": a, "stars": st, "basis": "role"} for a, st in [
+        ("Exact personal contribution on recent projects", 5), ("Production deployment experience", 5),
+        ("Model and architecture trade-offs", 4), ("Measured business impact", 4)]],
+    "role_focus": [{"area": a, "stars": st, "basis": "role"} for a, st in [
+        ("Production ML", 5), ("LLM / GenAI", 5), ("Model evaluation", 4), ("Python and data", 4)]],
+    "signal": [{"topic": t, "direction": d} for t, d in [
+        ("Production ML", "up"), ("LLM / RAG design", "up"), ("Model evaluation", "stable"),
+        ("Classical ML theory", "down")]],
+    "revision_priority": [{"item": i, "stars": st} for i, st in [
+        ("Project story with exact ownership", 5), ("Production ML scenario", 5),
+        ("RAG design trade-offs", 4), ("Evaluation metrics", 4)]],
+    "revision_order": [{"minutes": m, "item": i} for m, i in [
+        (10, "Project story with exact ownership"), (8, "Production ML scenario"),
+        (7, "RAG design trade-offs"), (5, "Evaluation metrics")]],
+    "tomorrow": {"review": [{"item": "Project story with ownership", "stars": 5},
+                            {"item": "Production ML lifecycle", "stars": 5}],
+                 "practice_out_loud": [{"item": "90-second project walkthrough", "stars": 5},
+                                       {"item": "RAG design out loud", "stars": 4}],
+                 "remember": ["State your exact contribution", "Explain trade-offs, not just choices"]},
+    "caveats": ["No transcripts supplied."],
+}
+
+
+def role_mode():
+    cases = [
+        ("role_only", Inputs("Google", "AI/ML Engineer", "Round 2", [])),
+        ("jd_text", Inputs("Google", "AI/ML Engineer", "Round 2", [], jd=("pasted text", "Build RAG systems."))),
+        ("jd_resume", Inputs("Google", "AI/ML Engineer", "Round 3", [], jd=("jd.pdf + pasted text", "JD"),
+                             resume=("cv.pdf", "Resume"))),
+    ]
+    for label, inp in cases:
+        packet = run(inp, FakeLLM())
+        assert packet["mode"] == "role" and packet["n"] == 0
+        out = build_all(packet, ROOT / "tests" / "out" / label)
+        failed = [c for c in out["checks"] if not c["passed"]]
+        print(label, packet["role_focus"]["title"], "|", packet["resume_focus"]["title"],
+              "| checks:", "all passed" if not failed else failed)
+        assert not failed
+
+
 def main():
     raw = []
     vtt = "WEBVTT\n\n1\n00:00:01.000 --> 00:00:04.000\n<v Interviewer>Can you hear me?</v>\n\n2\n00:00:05.000 --> 00:00:09.000\n<v Interviewer>Walk me through your project {}.</v>\n"
@@ -127,3 +181,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+    role_mode()

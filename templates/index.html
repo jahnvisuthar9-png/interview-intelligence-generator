@@ -26,6 +26,10 @@ label,.label{display:block;font-weight:600;font-size:13px;margin-bottom:6px}
 .opt{font-weight:400;color:var(--faint)}
 input[type=text]{width:100%;height:38px;border:1px solid var(--rule);border-radius:6px;padding:0 11px;
   font:inherit;color:var(--ink);background:#fff}
+textarea{width:100%;border:1px solid var(--rule);border-radius:6px;padding:9px 11px;font:inherit;
+  font-size:13px;color:var(--ink);background:#fff;resize:vertical;min-height:84px}
+textarea:focus{outline:2px solid var(--blue);outline-offset:-1px;border-color:transparent}
+.mode{font-size:12.5px;color:var(--muted);background:var(--tint);border-radius:6px;padding:8px 11px;margin-top:4px}
 input[type=text]:focus{outline:2px solid var(--blue);outline-offset:-1px;border-color:transparent}
 .row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .drop{border:1.5px dashed #BCC5D4;border-radius:8px;padding:14px;text-align:center;color:var(--muted);
@@ -89,7 +93,7 @@ details ul{margin:6px 0 0;padding-left:18px}
 <div class="app">
   <aside>
     <h1>Interview Intelligence Generator</h1>
-    <p class="lede">Turn past interview transcripts for one company and role into a one-page prep packet.</p>
+    <p class="lede">Build a one-page interview prep packet from past interview transcripts, or from just the role, round and JD.</p>
     {% if not key_ok %}
     <div class="warn">The server has no <code>OPENAI_API_KEY</code>. Set it and restart before generating.</div>
     {% endif %}
@@ -115,19 +119,20 @@ details ul{margin:6px 0 0;padding-left:18px}
       </div>
 
       <div class="field">
-        <span class="label">Interview transcripts</span>
+        <span class="label">Interview transcripts <span class="opt">optional</span></span>
         <div class="drop" id="tDrop" tabindex="0" role="button" aria-label="Add transcript files">
           <strong>Add transcripts</strong> or drop them here
         </div>
         <input type="file" id="tInput" multiple accept=".pdf,.txt,.vtt,.srt,.docx,.md" hidden>
-        <div class="hint">PDF, TXT, VTT, SRT or DOCX. Split parts like Name-1, Name-2 are merged per candidate.</div>
+        <div class="hint">PDF, TXT, VTT, SRT or DOCX. Split parts like Name-1, Name-2 are merged per candidate. Leave empty to build the packet from the role, round, JD and resume.</div>
         <ul class="files" id="tList"></ul>
       </div>
 
       <div class="field">
-        <span class="label">Job description <span class="opt">optional</span></span>
-        <div class="single">
-          <div class="drop" id="jdDrop" tabindex="0" role="button" aria-label="Add job description"><strong>Add JD</strong></div>
+        <label for="jd_text">Job description <span class="opt">optional</span></label>
+        <textarea id="jd_text" name="jd_text" rows="4" placeholder="Paste the JD text here, or upload a file below"></textarea>
+        <div class="single" style="margin-top:8px">
+          <div class="drop" id="jdDrop" tabindex="0" role="button" aria-label="Add job description file"><strong>Upload JD file</strong></div>
           <button type="button" class="btn hidden" id="jdClear">Remove</button>
         </div>
         <input type="file" id="jdInput" accept=".pdf,.txt,.docx,.md" hidden>
@@ -142,6 +147,7 @@ details ul{margin:6px 0 0;padding-left:18px}
         <input type="file" id="cvInput" accept=".pdf,.txt,.docx,.md" hidden>
       </div>
 
+      <div class="mode" id="mode" aria-live="polite"></div>
       <button type="submit" class="go" id="go">Generate Interview Intelligence</button>
       <div class="error" id="err" role="alert"></div>
     </form>
@@ -156,7 +162,7 @@ details ul{margin:6px 0 0;padding-left:18px}
     <div class="stage" id="stage">
       <div class="empty" id="empty">
         <div class="sheet" aria-hidden="true"><i class="h"></i><i class="s"></i><i class="t"></i><i></i><i class="a"></i><i></i><i class="s"></i><i></i><i class="a"></i><i></i></div>
-        Fill in the company, designation and round, add the transcripts, then generate. The packet preview appears here.
+        Fill in the company, designation and round. Add transcripts, a JD or a resume if you have them, then generate. The packet preview appears here.
       </div>
       <div class="progress hidden" id="progress"><div class="spinner"></div><div id="stageText">Reading files</div>
         <div class="hint">Analysis usually takes 1 to 3 minutes.</div></div>
@@ -189,6 +195,7 @@ function renderList(){
     b.onclick = () => { transcripts.splice(i, 1); renderList(); };
     li.append(s, b); ul.append(li);
   });
+  updateMode();
   $('tDrop').innerHTML = transcripts.length
     ? `<strong>${transcripts.length} file${transcripts.length > 1 ? 's' : ''} added</strong> · add more`
     : '<strong>Add transcripts</strong> or drop them here';
@@ -211,8 +218,19 @@ function single(dropId, inputId, clearId, label, set){
   bindDrop(drop, $(inputId), files => show(files[0] || null));
   clear.onclick = () => show(null);
 }
-single('jdDrop', 'jdInput', 'jdClear', 'Add JD', f => jd = f);
-single('cvDrop', 'cvInput', 'cvClear', 'Add resume', f => cv = f);
+single('jdDrop', 'jdInput', 'jdClear', 'Upload JD file', f => { jd = f; updateMode(); });
+single('cvDrop', 'cvInput', 'cvClear', 'Add resume', f => { cv = f; updateMode(); });
+
+function updateMode(){
+  const hasJD = !!jd || $('jd_text').value.trim().length > 0;
+  const extras = [hasJD && 'JD', cv && 'resume'].filter(Boolean);
+  $('mode').textContent = transcripts.length
+    ? `Evidence-based packet from ${transcripts.length} transcript file${transcripts.length > 1 ? 's' : ''}` +
+      (extras.length ? ` plus ${extras.join(' and ')}.` : '.')
+    : 'No transcripts: the packet will be predicted from the designation and round' +
+      (extras.length ? `, ${extras.join(' and ')}` : '') + ', with no interview counts.';
+}
+$('jd_text').addEventListener('input', updateMode);
 
 function setView(mode){
   $('empty').classList.toggle('hidden', mode !== 'empty');
@@ -227,7 +245,6 @@ $('form').addEventListener('submit', async e => {
   const need = [['company','Company'],['designation','Designation'],['target_round','Target round']]
     .filter(([id]) => !$(id).value.trim()).map(([,n]) => n);
   if (need.length) { $('err').textContent = 'Fill in: ' + need.join(', ') + '.'; return; }
-  if (!transcripts.length) { $('err').textContent = 'Add at least one interview transcript.'; return; }
 
   const fd = new FormData($('form'));
   transcripts.forEach(f => fd.append('transcripts', f, f.name));
@@ -275,13 +292,16 @@ function showResult(id, res){
   const items = res.checks.map(c =>
     `<li class="${c.passed ? 'ok' : 'bad'}">${c.passed ? '✓' : '✗'} ${esc(c.check)} <span style="color:var(--faint)">(${esc(c.detail)})</span></li>`).join('');
   const rej = res.rejected.length ? ` · ${res.rejected.length} unreadable file(s) skipped` : '';
-  $('status').innerHTML =
-    `<b>${res.interviews} candidate interview${res.interviews === 1 ? '' : 's'}</b> from ${res.files} file${res.files === 1 ? '' : 's'}` +
-    (res.duplicates ? ` · ${res.duplicates} duplicate${res.duplicates === 1 ? '' : 's'} removed` : '') + rej +
+  const head = res.interviews === 0
+    ? '<b>Role-based packet</b> (no transcripts, predicted from role and round)'
+    : `<b>${res.interviews} candidate interview${res.interviews === 1 ? '' : 's'}</b> from ${res.files} file${res.files === 1 ? '' : 's'}` +
+      (res.duplicates ? ` · ${res.duplicates} duplicate${res.duplicates === 1 ? '' : 's'} removed` : '');
+  $('status').innerHTML = head + rej +
     `<details><summary>${passed}/${res.checks.length} quality checks passed</summary><ul>${items}</ul></details>`;
   setView('pdf');
 }
 function esc(s){ return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+updateMode();
 </script>
 </body>
 </html>

@@ -1,0 +1,17 @@
+# One-click deploy on Render (free plan). Render reads this file automatically.
+services:
+  - type: web
+    name: interview-intelligence-generator
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    # 1 worker on purpose: job progress is kept in memory. Threads handle parallel users.
+    startCommand: gunicorn app:app --workers 1 --threads 8 --timeout 180 --bind 0.0.0.0:$PORT
+    healthCheckPath: /
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.7
+      - key: OPENAI_API_KEY
+        sync: false          # Render asks you to paste it; never stored in the code
+      - key: OPENAI_MODEL
+        value: gpt-4.1

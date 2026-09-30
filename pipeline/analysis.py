@@ -9,8 +9,10 @@ from datetime import datetime
 from typing import Callable
 
 from .grouping import InterviewGroup, TranscriptFile, build_files, finalize_groups, propose_groups
+import os
+
 from .llm import (ANALYSIS_SCHEMA, APP_ADDENDUM, EXTRACTION_SCHEMA, GROUPING_SCHEMA,
-                  load_source_prompt)
+                  ROLE_MODE_ADDENDUM, ROLE_SCHEMA, load_source_prompt)
 
 MAX_CHARS_PER_INTERVIEW = 600_000   # ~150k tokens; longer interviews are truncated with a note
 SNIPPET_HEAD, SNIPPET_TAIL = 1500, 400
@@ -22,7 +24,7 @@ class Inputs:
     designation: str
     target_round: str
     transcripts: list[tuple[str, str]]          # (filename, text)
-    jd: tuple[str, str] | None = None           # (filename, text)
+    jd: tuple[str, str] | None = None           # (source label, text): file name and/or "pasted text"
     resume: tuple[str, str] | None = None
     interview_dates: str = ""
     rejected_files: list[tuple[str, str]] = field(default_factory=list)  # (filename, reason)
@@ -138,6 +140,8 @@ def _snippet(text: str) -> str:
 
 # ------------------------------------------------------------------ pipeline
 def run(inputs: Inputs, llm, progress: Callable[[str], None] = lambda m: None) -> dict:
+    if not inputs.transcripts:
+        return run_role_based(inputs, llm, progress)
     notes: list[str] = []
     files = build_files(inputs.transcripts, inputs.company)
     if not files:
@@ -185,7 +189,7 @@ def run(inputs: Inputs, llm, progress: Callable[[str], None] = lambda m: None) -
         out["interview_id"] = grp.interview_id
         return out
 
-    with ThreadPoolExecutor(max_workers=4) as pool:
+    with ThreadPoolExecutor(max_workers=max(1, int(os.environ.get("MAX_PARALLEL_CALLS", "4")))) as pool:
         extractions = list(pool.map(extract, groups))
 
     kept_groups, kept_ex = [], []
@@ -267,26 +271,7 @@ def validate(a: dict, inputs: Inputs, n: int, valid_ids: list[str], extractions:
     questions.sort(key=lambda q: -q["stars"])  # stable: keeps the model's priority order within a star level
     questions = questions[:8]
 
-    def starred(items, key, limit, maxlen=80):
-        out = []
-        for it in items:
-            txt = _clean(it.get(key, ""), maxlen)
-            if txt:
-                out.append({"text": txt, "stars": _clamp_stars(it.get("stars")),
-                            "basis": _clean(it.get("basis", ""), 200)})
-        out.sort(key=lambda x: -x["stars"])
-        return out[:limit]
-
-    resume_focus = starred(a.get("resume_focus", []), "area", 5)
-    role_focus = starred(a.get("role_focus", []), "area", 6)
-    revision_priority = starred(a.get("revision_priority", []), "item", 6)
-    tomorrow = a.get("tomorrow", {})
-    review = starred(tomorrow.get("review", []), "item", 4, 60)
-    practice = starred(tomorrow.get("practice_out_loud", []), "item", 4, 60)
-    remember = [_clean(r, 70) for r in tomorrow.get("remember", []) if _clean(r, 70)][:4]
-
-    order = _normalize_minutes([{"item": _clean(s.get("item", ""), 80), "minutes": s.get("minutes", 1)}
-                                for s in a.get("revision_order", [])][:6])
+    shared = _shared_sections(a)
 
     # E. trend: chronological wording only when dates really exist
     trend = a.get("trend", {})
@@ -304,19 +289,20 @@ def validate(a: dict, inputs: Inputs, n: int, valid_ids: list[str], extractions:
         "interview_ids": valid_ids,
         "topics": topics,
         "questions": questions,
+        "mode": "transcripts",
         "resume_focus": {
             "title": "Resume focus" if has_resume else "Observed resume focus",
             "note": ("Based on this candidate's resume compared with what interviewers probed."
                      if has_resume else
                      "No candidate resume supplied; shows what interviewers historically probe in "
                      "candidate experience, not this candidate's resume."),
-            "items": resume_focus},
+            "items": shared["resume_focus"]},
         "role_focus": {
             "title": "JD focus" if has_jd else "Interview-derived role focus",
             "note": ("JD requirements ranked by how strongly interviews emphasized them."
                      if has_jd else
                      "Exact JD not supplied; rankings reflect observed interview emphasis."),
-            "items": role_focus},
+            "items": shared["role_focus"]},
         "trend": {
             "title": "Recent trend" if chronological else "Preparation signal",
             "chronological": chronological,
@@ -324,10 +310,131 @@ def validate(a: dict, inputs: Inputs, n: int, valid_ids: list[str], extractions:
             if chronological else
             "Signals reflect recurrence and interviewer emphasis, not chronological change.",
             "items": trend_items},
-        "revision_priority": revision_priority,
-        "revision_order": order,
-        "tomorrow": {"review": review, "practice": practice, "remember": remember},
+        "revision_priority": shared["revision_priority"],
+        "revision_order": shared["revision_order"],
+        "tomorrow": shared["tomorrow"],
         "meta": {"generated": datetime.now().strftime("%Y-%m-%d %H:%M"),
                  "dates_supplied": dates_supplied, "transcript_date_mentions": transcript_dates,
                  "trend_reason": _clean(trend.get("reason", ""), 300)},
+    }
+
+
+def _starred(items, key, limit, maxlen=80):
+    out = []
+    for it in items:
+        txt = _clean(it.get(key, ""), maxlen)
+        if txt:
+            out.append({"text": txt, "stars": _clamp_stars(it.get("stars")),
+                        "basis": _clean(it.get("basis", ""), 200)})
+    out.sort(key=lambda x: -x["stars"])
+    return out[:limit]
+
+
+def _shared_sections(a: dict) -> dict:
+    """Sections built the same way in both modes (F, G, resume and role focus items)."""
+    t = a.get("tomorrow", {})
+    return {
+        "resume_focus": _starred(a.get("resume_focus", []), "area", 5),
+        "role_focus": _starred(a.get("role_focus", []), "area", 6),
+        "revision_priority": _starred(a.get("revision_priority", []), "item", 6),
+        "revision_order": _normalize_minutes(
+            [{"item": _clean(x.get("item", ""), 80), "minutes": x.get("minutes", 1)}
+             for x in a.get("revision_order", [])][:6]),
+        "tomorrow": {
+            "review": _starred(t.get("review", []), "item", 4, 60),
+            "practice": _starred(t.get("practice_out_loud", []), "item", 4, 60),
+            "remember": [_clean(r, 70) for r in t.get("remember", []) if _clean(r, 70)][:4],
+        },
+    }
+
+
+# ------------------------------------------------------------------ role-based mode
+ROLE_TASK = """
+Build every packet section for the target round from the designation, round, company and any
+JD / resume supplied (see ROLE-BASED MODE above):
+- topics: 6-8 topics this round is most likely to cover for this designation, with stars for
+  expected emphasis and a short basis (JD line, resume item, or the role/round itself).
+- top_questions: 5-8 likely question patterns, concise and interview-ready, with stars.
+- resume_focus: 4-5 areas. With a resume: the parts of THIS resume most likely to be probed.
+  Without one: the experience areas this role/round typically probes.
+- role_focus: 4-6 areas. With a JD: JD responsibilities/skills ranked by likely interview weight.
+  Without one: the core competencies of the designation.
+- signal: 4-6 topics with direction up (prepare most), stable (core), down (lower priority).
+- revision_priority 4-6 with stars; revision_order 4-6 steps totalling 30 minutes.
+- tomorrow: review 3-4, practice_out_loud 3-4, remember 3-4 (specific, no filler).
+Topics <= 55 chars, list items <= 70 chars, questions <= 110 chars. Plain text, no star
+characters, no counts or percentages.
+caveats: limitations worth noting (e.g. no JD, no resume, no transcripts).
+"""
+
+
+def run_role_based(inputs: Inputs, llm, progress: Callable[[str], None] = lambda m: None) -> dict:
+    """No transcripts: one model call grounded in designation, round, JD and resume."""
+    progress("Building a role-based packet (no transcripts supplied)")
+    system = load_source_prompt() + "\n" + APP_ADDENDUM + ROLE_MODE_ADDENDUM + "\nSTAGE TASK:\n" + ROLE_TASK.strip()
+    user = json.dumps({
+        "company": inputs.company, "designation": inputs.designation,
+        "target_round": inputs.target_round,
+        "job_description": inputs.jd[1] if inputs.jd else "NOT PROVIDED",
+        "candidate_resume": inputs.resume[1] if inputs.resume else "NOT PROVIDED",
+        "historical_interview_transcripts": "NOT PROVIDED",
+    }, ensure_ascii=False)
+    a = llm.structured(system, user, ROLE_SCHEMA, "role_based_packet")
+    packet = validate_role(a, inputs)
+    packet["meta"].update({
+        "transcript_files": [], "duplicates": [], "groups": [], "grouping_source": "not applicable",
+        "notes": [_clean(c, 300) for c in a.get("caveats", []) if c],
+        "rejected_files": inputs.rejected_files,
+        "jd_file": inputs.jd[0] if inputs.jd else None,
+        "resume_file": inputs.resume[0] if inputs.resume else None,
+        "model": getattr(llm, "model", "unknown"),
+    })
+    return packet
+
+
+def validate_role(a: dict, inputs: Inputs) -> dict:
+    shared = _shared_sections(a)
+    has_resume, has_jd = inputs.resume is not None, inputs.jd is not None
+    parts = ["designation", "interview round"] + (["JD"] if has_jd else []) + (["resume"] if has_resume else [])
+    source = ", ".join(parts[:-1]) + " and " + parts[-1]
+    topics = [{"name": _clean(t.get("name", ""), 60), "stars": _clamp_stars(t.get("stars")),
+               "basis": _clean(t.get("basis", ""), 200)}
+              for t in a.get("topics", []) if _clean(t.get("name", ""), 60)]
+    topics.sort(key=lambda t: -t["stars"])
+    questions = [{"text": _clean(q.get("question", ""), 130), "stars": _clamp_stars(q.get("stars")),
+                  "count": 0, "ids": [], "why": _clean(q.get("why_prioritized", ""), 200)}
+                 for q in a.get("top_questions", []) if _clean(q.get("question", ""), 130)]
+    questions.sort(key=lambda q: -q["stars"])
+    return {
+        "mode": "role",
+        "source_label": source,
+        "company": inputs.company.strip(),
+        "designation": inputs.designation.strip(),
+        "target_round": inputs.target_round.strip(),
+        "n": 0,
+        "interview_ids": [],
+        "topics": topics[:8],
+        "questions": questions[:8],
+        "resume_focus": {
+            "title": "Resume focus" if has_resume else "Expected resume focus",
+            "note": ("Parts of this candidate's resume most likely to be probed for this role and round."
+                     if has_resume else
+                     "No resume supplied; typical experience areas probed for this role and round."),
+            "items": shared["resume_focus"]},
+        "role_focus": {
+            "title": "JD focus" if has_jd else "Role focus",
+            "note": ("JD requirements ranked by expected interview weight; not observed interview data."
+                     if has_jd else
+                     "No JD supplied; core competencies expected for this designation."),
+            "items": shared["role_focus"]},
+        "trend": {
+            "title": "Preparation signal", "chronological": False,
+            "note": "Signals reflect expected emphasis for this role and round, not observed or chronological data.",
+            "items": [{"topic": _clean(t.get("topic", ""), 60), "direction": t.get("direction", "stable")}
+                      for t in a.get("signal", []) if _clean(t.get("topic", ""), 60)][:6]},
+        "revision_priority": shared["revision_priority"],
+        "revision_order": shared["revision_order"],
+        "tomorrow": shared["tomorrow"],
+        "meta": {"generated": datetime.now().strftime("%Y-%m-%d %H:%M"), "dates_supplied": False,
+                 "transcript_date_mentions": 0, "trend_reason": ""},
     }

@@ -144,7 +144,9 @@ class SectionHead(Block):
     def draw(self, c, x, top, w):
         base = top - self.size
         tracked(c, x, base, self.title, "Inter-Bold", self.size, self.color, 0.35 * self.ctx.s)
-        if self.hint:
+        title_w = stringWidth(self.title, "Inter-Bold", self.size) + 0.35 * self.ctx.s * len(self.title)
+        hint_w = stringWidth(self.hint, "Inter-Italic", self.hsize) if self.hint else 0
+        if self.hint and title_w + hint_w + 10 <= w:  # never let the hint touch the title
             c.setFillColor(FAINT); c.setFont("Inter-Italic", self.hsize)
             c.drawRightString(x + w, base, self.hint)
         if self.rule:
@@ -279,19 +281,26 @@ def compose(packet: dict, ctx: Ctx):
                     title=tomorrow_title, title_gap=6 * s)
 
     # --- main left
-    left = [SectionHead(ctx, "Round coverage / top topics", f"candidate-level, out of {n}"), Gap(2 * s)]
-    left += [TopicRow(ctx, tp["name"], tp["count"], n) for tp in packet["topics"]]
+    role = packet.get("mode") == "role"
+    if role:
+        left = [SectionHead(ctx, "Expected round coverage", "predicted, not observed"), Gap(2 * s)]
+        left += _star_rows(ctx, [{"text": tp["name"], "stars": tp["stars"]} for tp in packet["topics"]])
+    else:
+        left = [SectionHead(ctx, "Round coverage / top topics", f"candidate-level, out of {n}"), Gap(2 * s)]
+        left += [TopicRow(ctx, tp["name"], tp["count"], n) for tp in packet["topics"]]
     rf = packet["resume_focus"]
     left += [Gap(9 * s), SectionHead(ctx, rf["title"]), Gap(2 * s)] + _star_rows(ctx, rf["items"])
     left += [Gap(1 * s), Para(ctx, rf["note"], 6.7, "Inter-Italic", FAINT)]
 
     # --- main right
-    right = [SectionHead(ctx, "Top questions", "rehearse these"), Gap(2 * s)]
+    right = [SectionHead(ctx, "Likely questions" if role else "Top questions",
+                         "predicted, rehearse these" if role else "rehearse these"), Gap(2 * s)]
     for i, q in enumerate(packet["questions"], 1):
         num = f'<font name="Inter-SemiBold" color="#8C96A8">{i:02d}</font>&nbsp;&nbsp;'
         right.append(LeadRow(ctx, "stars", q["stars"], q["text"], 8.1, prefix_markup=num))
     tr = packet["trend"]
-    hint = "by interview date" if tr["chronological"] else "recurrence, not chronology"
+    hint = ("expected emphasis" if role else
+            "by interview date" if tr["chronological"] else "recurrence, not chronology")
     right += [Gap(9 * s), SectionHead(ctx, tr["title"], hint), Gap(2 * s)]
     right += [LeadRow(ctx, "arrow", it["direction"], it["topic"]) for it in tr["items"]]
     right += [Gap(1 * s), Para(ctx, tr["note"], 6.7, "Inter-Italic", FAINT)]
@@ -314,7 +323,14 @@ def compose(packet: dict, ctx: Ctx):
     total = sum(st["minutes"] for st in packet["revision_order"])
     order = Band([Column(order_rows, row)], gap=0, pad=10 * s, fill=TINT)
 
-    footer = Para(ctx,
+    if role:
+        footer_text = (f"Generated {packet['meta']['generated']}. No historical interview transcripts were "
+                       f"supplied: this packet is predicted from the {packet['source_label']}, not observed "
+                       f"interview data. Stars show expected preparation priority; no counts are shown because "
+                       f"none were observed.")
+    else:
+        footer_text = None
+    footer = Para(ctx, footer_text or
                   f"Generated {packet['meta']['generated']}. Denominator = {n} unique candidate "
                   f"interview{'s' if n != 1 else ''} (transcript parts merged per candidate, exact "
                   f"duplicates removed). Counts show interviews in which a topic appeared; stars show "
@@ -359,8 +375,11 @@ def _draw_header(c, packet, ctx, top):
     p, pw, ph = _subtitle(packet, ctx)
     p.drawOn(c, MARGIN_X, base - 6 * s - ph)
     # interview count, right aligned
-    lbl = (f"{packet['n']} CANDIDATE INTERVIEW ANALYZED" if packet["n"] == 1
-           else f"{packet['n']} CANDIDATE INTERVIEWS ANALYZED")
+    if packet.get("mode") == "role":
+        lbl = "ROLE-BASED  |  NO TRANSCRIPTS"
+    else:
+        lbl = (f"{packet['n']} CANDIDATE INTERVIEW ANALYZED" if packet["n"] == 1
+               else f"{packet['n']} CANDIDATE INTERVIEWS ANALYZED")
     lsize = ctx.fs(9)
     lw = stringWidth(lbl, "Inter-Bold", lsize) + 0.3 * s * (len(lbl) - 1)
     tracked(c, MARGIN_X + CONTENT_W - lw, top - lsize - 2 * s, lbl, "Inter-Bold", lsize, BLUE, 0.3 * s)

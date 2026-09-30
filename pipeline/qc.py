@@ -79,7 +79,10 @@ def run_checks(pdf_path: str, png_path: str, packet: dict, layout: dict) -> list
         if ov == -1 else f"{ov} overlapping word box(es)")
     add("Readable text size", layout["min_font_pt"] >= MIN_FONT_PT, f"smallest font {layout['min_font_pt']} pt")
 
-    required = ["Tomorrow's interview", "Round coverage / top topics", packet["resume_focus"]["title"], "Top questions",
+    role = packet.get("mode") == "role"
+    required = ["Tomorrow's interview",
+                "Expected round coverage" if role else "Round coverage / top topics",
+                packet["resume_focus"]["title"], "Likely questions" if role else "Top questions",
                 packet["trend"]["title"], packet["role_focus"]["title"], "Revision priority",
                 "30-minute revision order"]
     missing = [r for r in required if r.upper() not in upper]
@@ -88,9 +91,15 @@ def run_checks(pdf_path: str, png_path: str, packet: dict, layout: dict) -> list
         ", ".join(missing + empty) or "all present")
 
     n = packet["n"]
-    bad = [t["name"] for t in packet["topics"] if not (1 <= t["count"] <= n)]
-    add("Counts use unique candidate interviews", not bad and f"out of {n}" in flat,
-        f"denominator {n}" + (f"; invalid: {bad}" if bad else ""))
+    if role:
+        fake = re.findall(r"\b\d{1,3}\s*/\s*\d{1,3}\b|\d+(?:\.\d+)?\s*%", flat)
+        add("Role-based packet labeled; no invented counts",
+            "NO TRANSCRIPTS" in upper and "NOT OBSERVED" in upper and not fake,
+            "no counts or percentages shown" if not fake else f"found: {fake}")
+    else:
+        bad = [t["name"] for t in packet["topics"] if not (1 <= t["count"] <= n)]
+        add("Counts use unique candidate interviews", not bad and f"out of {n}" in flat,
+            f"denominator {n}" + (f"; invalid: {bad}" if bad else ""))
     comp = re.sub(r"\s+", " ", packet["company"])
     desig = re.sub(r"\s+", " ", packet["designation"])
     add("Company and designation spelled as entered", comp in flat and desig in flat, f"{comp} / {desig}")

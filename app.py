@@ -100,19 +100,18 @@ def generate():
     if missing:
         return jsonify(error=f"Fill in: {', '.join(missing)}."), 400
 
+    # Transcripts are optional. Without them the packet is role-based (designation, round, JD, resume).
     uploads = [f for f in request.files.getlist("transcripts") if f and f.filename]
-    if not uploads:
-        return jsonify(error="Add at least one interview transcript."), 400
-
     transcripts, rejected = [], []
     for f in uploads:
         try:
             transcripts.append(_read_upload(f))
         except ExtractionError as e:
             rejected.append((os.path.basename(f.filename), str(e)))
-    if not transcripts:
+    if uploads and not transcripts:
         return jsonify(error="None of the transcripts could be read. " +
-                       "; ".join(f"{n}: {r}" for n, r in rejected)), 400
+                       "; ".join(f"{n}: {r}" for n, r in rejected) +
+                       " Remove them to generate a role-based packet instead."), 400
 
     def optional(field):
         f = request.files.get(field)
@@ -124,9 +123,20 @@ def generate():
             raise ValueError(f"{field.upper() if field == 'jd' else 'Resume'} file could not be read: {e}")
 
     try:
-        jd, resume = optional("jd"), optional("resume")
+        jd_file, resume = optional("jd"), optional("resume")
     except ValueError as e:
         return jsonify(error=str(e)), 400
+
+    # JD: pasted text, an uploaded file, or both (combined).
+    jd_text = (request.form.get("jd_text") or "").strip()
+    if jd_file and jd_text:
+        jd = (f"{jd_file[0]} + pasted text", f"{jd_file[1]}\n\n--- pasted JD text ---\n{jd_text}")
+    elif jd_file:
+        jd = jd_file
+    elif jd_text:
+        jd = ("pasted text", jd_text)
+    else:
+        jd = None
 
     if not os.environ.get("OPENAI_API_KEY"):
         return jsonify(error="The server has no OPENAI_API_KEY set. Add it and restart the app."), 500

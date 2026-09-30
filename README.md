@@ -2,7 +2,11 @@
 
 A single-page web app that turns historical interview transcripts for one company and designation into the one-page Interview Intelligence Packet defined in `prompt.txt`.
 
-## Run it
+## Put it online (free)
+
+See **DEPLOY.md**: upload to GitHub, connect Render, paste your OpenAI key, share the link. No coding needed.
+
+## Run it on your own computer
 
 ```bash
 python -m venv .venv && source .venv/bin/activate      # Windows: .venv\Scripts\activate
@@ -18,7 +22,12 @@ The key is only read on the server; the browser never sees it. Set `OPENAI_MODEL
 
 Upload files → Generate → OpenAI analysis (with `prompt.txt`) → one-page PDF → preview → download PDF or ZIP.
 
-Inputs: company, designation, target round, optional interview dates, multiple transcripts (PDF, TXT, VTT, SRT, DOCX), optional JD, optional resume.
+Inputs: company, designation and target round (required); optional interview dates; optional transcripts (PDF, TXT, VTT, SRT, DOCX, multiple); optional JD as pasted text, a file, or both; optional resume.
+
+### Two modes
+
+- **Evidence-based** (transcripts supplied): everything in `prompt.txt` applies, including candidate-level counts like 7/10.
+- **Role-based** (no transcripts): the packet is predicted from the designation and round plus whatever JD/resume was given. `prompt.txt` is still sent, with an added note that its transcript rules can't apply. The page shows no counts or percentages; the header reads "ROLE-BASED | NO TRANSCRIPTS", section titles become "Expected round coverage" and "Likely questions", and the footer, Evidence_Matrix.csv and methodology all state that nothing was observed. QC verifies this labelling and that no counts appear.
 
 ## How `prompt.txt` is applied
 
@@ -60,6 +69,15 @@ python -m tests.compare_sample
 ```
 
 Renders the reference sample's exact content through the app and compares it with `tests/reference_sample.pdf`: page count and size, every section heading, topic counts, and all QC checks. Writes `tests/compare/side_by_side.png` (reference left, app right).
+
+## Optional settings
+
+| Variable | Default | Use |
+|---|---|---|
+| `OPENAI_MODEL` | `gpt-4.1` | Model name |
+| `OPENAI_BASE_URL` | OpenAI | Point at any OpenAI-compatible API, e.g. Gemini's `https://generativelanguage.googleapis.com/v1beta/openai/` |
+| `MAX_PARALLEL_CALLS` | `4` | Set to `1` on free tiers with low per-minute limits |
+| `OPENAI_MAX_RETRIES` | `6` | Retries with backoff when rate-limited |
 
 ## Notes
 

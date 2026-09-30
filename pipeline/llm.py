@@ -85,6 +85,39 @@ ANALYSIS_SCHEMA = _obj({
 })
 
 
+# ---------- Role-based mode (no transcripts supplied) ----------
+ROLE_SCHEMA = _obj({
+    "topics": _arr(_obj({"name": S, "stars": STARS, "basis": S})),
+    "top_questions": _arr(_obj({"question": S, "stars": STARS, "why_prioritized": S})),
+    "resume_focus": _arr(_obj({"area": S, "stars": STARS, "basis": S})),
+    "role_focus": _arr(_obj({"area": S, "stars": STARS, "basis": S})),
+    "signal": _arr(_obj({"topic": S, "direction": {"type": "string", "enum": ["up", "stable", "down"]}})),
+    "revision_priority": _arr(_obj({"item": S, "stars": STARS})),
+    "revision_order": _arr(_obj({"minutes": I, "item": S})),
+    "tomorrow": _obj({
+        "review": _arr(_obj({"item": S, "stars": STARS})),
+        "practice_out_loud": _arr(_obj({"item": S, "stars": STARS})),
+        "remember": _arr(S),
+    }),
+    "caveats": _arr(S),
+})
+
+ROLE_MODE_ADDENDUM = """
+==================================================
+ROLE-BASED MODE (no historical transcripts supplied)
+==================================================
+The user supplied NO historical interview transcripts. The transcript-handling, frequency and
+candidate-count rules above therefore cannot be applied, and you must not pretend they were.
+Instead, build the same packet sections from what WAS supplied: company, designation, target
+round, and the JD and/or candidate resume if present. Follow every other rule in prompt.txt
+(no generic filler, no invented statistics, stars as the priority indicator, JD Focus only if a
+JD is supplied, Resume Focus only if a resume is supplied, no chronological trend claims).
+- Never output counts, percentages or "X of Y interviews"; nothing here was observed.
+- Everything is an expectation for this designation and round, grounded in the JD/resume text
+  when supplied; say so in each "basis".
+- Do not claim knowledge of this company's actual interview questions unless it is in the JD.
+"""
+
 APP_ADDENDUM = """
 ==================================================
 APP INTEGRATION NOTES (added by the Interview Intelligence Generator app)
@@ -109,7 +142,7 @@ class OpenAIClient:
         from openai import OpenAI
 
         self.client = OpenAI(api_key=key, timeout=float(os.environ.get("OPENAI_TIMEOUT", "300")),
-                             max_retries=3)
+                             max_retries=int(os.environ.get("OPENAI_MAX_RETRIES", "6")))
         self.model = model or os.environ.get("OPENAI_MODEL", "gpt-4.1")
 
     def structured(self, system: str, user: str, schema: dict, name: str) -> dict:
