@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Interview Intelligence Generator</title>
+<style>
+@font-face{font-family:Inter;src:url(/fonts/Inter-Regular.ttf) format("truetype");font-weight:400;font-display:swap}
+@font-face{font-family:Inter;src:url(/fonts/Inter-Medium.ttf) format("truetype");font-weight:500;font-display:swap}
+@font-face{font-family:Inter;src:url(/fonts/Inter-SemiBold.ttf) format("truetype");font-weight:600;font-display:swap}
+@font-face{font-family:Inter;src:url(/fonts/Inter-Bold.ttf) format("truetype");font-weight:700;font-display:swap}
+:root{
+  --ink:#16233B; --blue:#2A52BE; --blue-soft:#E4EAF8; --muted:#5E6A7E; --faint:#8C96A8;
+  --rule:#D9DEE7; --tint:#EEF2F9; --amber:#D99A06; --red:#B42318; --green:#1E8A57; --bg:#FFFFFF;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{font-family:Inter,system-ui,-apple-system,"Segoe UI",sans-serif;color:var(--ink);background:var(--bg);
+  font-size:14px;line-height:1.45}
+.app{display:grid;grid-template-columns:400px 1fr;min-height:100vh}
+aside{border-right:1px solid var(--rule);padding:28px 28px 32px;overflow-y:auto}
+h1{font-size:22px;font-weight:700;letter-spacing:-.01em;margin:0 0 4px}
+.lede{color:var(--muted);margin:0 0 24px;font-size:13px}
+.field{margin-bottom:16px}
+label,.label{display:block;font-weight:600;font-size:13px;margin-bottom:6px}
+.opt{font-weight:400;color:var(--faint)}
+input[type=text]{width:100%;height:38px;border:1px solid var(--rule);border-radius:6px;padding:0 11px;
+  font:inherit;color:var(--ink);background:#fff}
+input[type=text]:focus{outline:2px solid var(--blue);outline-offset:-1px;border-color:transparent}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.drop{border:1.5px dashed #BCC5D4;border-radius:8px;padding:14px;text-align:center;color:var(--muted);
+  font-size:13px;cursor:pointer;background:#FAFBFD;transition:border-color .15s,background .15s}
+.drop:hover,.drop.over{border-color:var(--blue);background:var(--tint)}
+.drop:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
+.drop strong{color:var(--blue);font-weight:600}
+.hint{font-size:12px;color:var(--faint);margin-top:6px}
+.files{list-style:none;margin:8px 0 0;padding:0;font-size:12.5px}
+.files li{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:5px 0;
+  border-bottom:1px solid #EEF0F4}
+.files li span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.files button{border:0;background:none;color:var(--faint);cursor:pointer;font-size:16px;line-height:1;padding:2px 4px}
+.files button:hover{color:var(--red)}
+.single{display:flex;align-items:center;gap:8px}
+.single .drop{flex:1;padding:9px;text-align:left}
+.go{width:100%;height:44px;border:0;border-radius:7px;background:var(--ink);color:#fff;font:inherit;
+  font-weight:600;font-size:14.5px;cursor:pointer;margin-top:8px}
+.go:hover{background:#0F1A2E}
+.go:disabled{background:#8C96A8;cursor:progress}
+.go:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
+.error{color:var(--red);font-size:13px;margin-top:10px;white-space:pre-wrap}
+.warn{background:#FFF6E5;color:#7A4B00;border-radius:6px;padding:9px 11px;font-size:12.5px;margin-bottom:18px}
+main{display:flex;flex-direction:column;min-width:0;background:var(--tint)}
+.bar{display:flex;align-items:center;gap:12px;padding:14px 24px;border-bottom:1px solid var(--rule);
+  background:#fff;min-height:64px;flex-wrap:wrap}
+.bar .status{flex:1;min-width:200px;font-size:13px;color:var(--muted)}
+.bar .status b{color:var(--ink);font-weight:600}
+.btn{display:inline-flex;align-items:center;height:36px;padding:0 14px;border-radius:6px;font-weight:600;
+  font-size:13px;text-decoration:none;border:1px solid var(--rule);color:var(--ink);background:#fff}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:#fff}
+.btn:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
+.stage{flex:1;display:flex;align-items:center;justify-content:center;padding:24px}
+.empty{max-width:420px;text-align:center;color:var(--muted)}
+.empty .sheet{width:150px;height:194px;margin:0 auto 18px;background:#fff;border-radius:4px;
+  box-shadow:0 1px 2px rgba(22,35,59,.08),0 8px 24px rgba(22,35,59,.06);padding:14px;text-align:left}
+.sheet i{display:block;height:5px;border-radius:3px;background:var(--rule);margin-bottom:7px}
+.sheet i.h{height:9px;width:70%;background:var(--ink);opacity:.85}
+.sheet i.t{height:26px;background:var(--tint);margin:10px 0}
+.sheet i.s{width:55%}
+.sheet i.a{width:40%;background:#F2D796}
+.progress{text-align:center;color:var(--muted)}
+.spinner{width:34px;height:34px;border:3px solid var(--blue-soft);border-top-color:var(--blue);border-radius:50%;
+  margin:0 auto 14px;animation:spin .9s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.spinner{animation-duration:3s}}
+iframe{flex:1;width:100%;border:0;background:#fff}
+details{font-size:12.5px;color:var(--muted)}
+details summary{cursor:pointer}
+details ul{margin:6px 0 0;padding-left:18px}
+.ok{color:var(--green)} .bad{color:var(--red)}
+.hidden{display:none!important}
+@media (max-width:900px){
+  .app{grid-template-columns:1fr}
+  aside{border-right:0;border-bottom:1px solid var(--rule)}
+  main{min-height:80vh}
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside>
+    <h1>Interview Intelligence Generator</h1>
+    <p class="lede">Turn past interview transcripts for one company and role into a one-page prep packet.</p>
+    {% if not key_ok %}
+    <div class="warn">The server has no <code>OPENAI_API_KEY</code>. Set it and restart before generating.</div>
+    {% endif %}
+    <form id="form" novalidate>
+      <div class="field">
+        <label for="company">Company</label>
+        <input type="text" id="company" name="company" autocomplete="organization" required>
+      </div>
+      <div class="field">
+        <label for="designation">Designation</label>
+        <input type="text" id="designation" name="designation" required>
+      </div>
+      <div class="row">
+        <div class="field">
+          <label for="target_round">Target round</label>
+          <input type="text" id="target_round" name="target_round" list="rounds" value="Round 2" required>
+          <datalist id="rounds"><option>Round 2</option><option>Round 3</option><option>Round 4</option><option>Final round</option></datalist>
+        </div>
+        <div class="field">
+          <label for="interview_dates">Interview dates <span class="opt">optional</span></label>
+          <input type="text" id="interview_dates" name="interview_dates" placeholder="e.g. Sohan 2026-05-02">
+        </div>
+      </div>
+
+      <div class="field">
+        <span class="label">Interview transcripts</span>
+        <div class="drop" id="tDrop" tabindex="0" role="button" aria-label="Add transcript files">
+          <strong>Add transcripts</strong> or drop them here
+        </div>
+        <input type="file" id="tInput" multiple accept=".pdf,.txt,.vtt,.srt,.docx,.md" hidden>
+        <div class="hint">PDF, TXT, VTT, SRT or DOCX. Split parts like Name-1, Name-2 are merged per candidate.</div>
+        <ul class="files" id="tList"></ul>
+      </div>
+
+      <div class="field">
+        <span class="label">Job description <span class="opt">optional</span></span>
+        <div class="single">
+          <div class="drop" id="jdDrop" tabindex="0" role="button" aria-label="Add job description"><strong>Add JD</strong></div>
+          <button type="button" class="btn hidden" id="jdClear">Remove</button>
+        </div>
+        <input type="file" id="jdInput" accept=".pdf,.txt,.docx,.md" hidden>
+      </div>
+
+      <div class="field">
+        <span class="label">Candidate resume <span class="opt">optional</span></span>
+        <div class="single">
+          <div class="drop" id="cvDrop" tabindex="0" role="button" aria-label="Add resume"><strong>Add resume</strong></div>
+          <button type="button" class="btn hidden" id="cvClear">Remove</button>
+        </div>
+        <input type="file" id="cvInput" accept=".pdf,.txt,.docx,.md" hidden>
+      </div>
+
+      <button type="submit" class="go" id="go">Generate Interview Intelligence</button>
+      <div class="error" id="err" role="alert"></div>
+    </form>
+  </aside>
+
+  <main>
+    <div class="bar">
+      <div class="status" id="status">No packet yet.</div>
+      <a class="btn hidden" id="zipBtn">Download ZIP package</a>
+      <a class="btn primary hidden" id="pdfBtn">Download PDF</a>
+    </div>
+    <div class="stage" id="stage">
+      <div class="empty" id="empty">
+        <div class="sheet" aria-hidden="true"><i class="h"></i><i class="s"></i><i class="t"></i><i></i><i class="a"></i><i></i><i class="s"></i><i></i><i class="a"></i><i></i></div>
+        Fill in the company, designation and round, add the transcripts, then generate. The packet preview appears here.
+      </div>
+      <div class="progress hidden" id="progress"><div class="spinner"></div><div id="stageText">Reading files</div>
+        <div class="hint">Analysis usually takes 1 to 3 minutes.</div></div>
+    </div>
+    <iframe id="preview" class="hidden" title="Generated packet preview"></iframe>
+  </main>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+let transcripts = [];
+let jd = null, cv = null;
+
+function bindDrop(drop, input, onFiles){
+  drop.addEventListener('click', () => input.click());
+  drop.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); input.click(); }});
+  input.addEventListener('change', () => { onFiles([...input.files]); input.value = ''; });
+  ['dragenter','dragover'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('over'); }));
+  ['dragleave','drop'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('over'); }));
+  drop.addEventListener('drop', e => onFiles([...e.dataTransfer.files]));
+}
+
+function renderList(){
+  const ul = $('tList'); ul.innerHTML = '';
+  transcripts.forEach((f, i) => {
+    const li = document.createElement('li');
+    const s = document.createElement('span'); s.textContent = f.name; s.title = f.name;
+    const b = document.createElement('button'); b.type = 'button'; b.textContent = '×';
+    b.setAttribute('aria-label', 'Remove ' + f.name);
+    b.onclick = () => { transcripts.splice(i, 1); renderList(); };
+    li.append(s, b); ul.append(li);
+  });
+  $('tDrop').innerHTML = transcripts.length
+    ? `<strong>${transcripts.length} file${transcripts.length > 1 ? 's' : ''} added</strong> · add more`
+    : '<strong>Add transcripts</strong> or drop them here';
+}
+
+bindDrop($('tDrop'), $('tInput'), files => {
+  const seen = new Set(transcripts.map(f => f.name + f.size));
+  files.forEach(f => { if (!seen.has(f.name + f.size)) transcripts.push(f); });
+  renderList();
+});
+
+function single(dropId, inputId, clearId, label, set){
+  const drop = $(dropId), clear = $(clearId);
+  const show = f => {
+    set(f);
+    drop.innerHTML = f ? '' : `<strong>${label}</strong>`;
+    if (f) drop.textContent = f.name;
+    clear.classList.toggle('hidden', !f);
+  };
+  bindDrop(drop, $(inputId), files => show(files[0] || null));
+  clear.onclick = () => show(null);
+}
+single('jdDrop', 'jdInput', 'jdClear', 'Add JD', f => jd = f);
+single('cvDrop', 'cvInput', 'cvClear', 'Add resume', f => cv = f);
+
+function setView(mode){
+  $('empty').classList.toggle('hidden', mode !== 'empty');
+  $('progress').classList.toggle('hidden', mode !== 'progress');
+  $('stage').classList.toggle('hidden', mode === 'pdf');
+  $('preview').classList.toggle('hidden', mode !== 'pdf');
+}
+
+$('form').addEventListener('submit', async e => {
+  e.preventDefault();
+  $('err').textContent = '';
+  const need = [['company','Company'],['designation','Designation'],['target_round','Target round']]
+    .filter(([id]) => !$(id).value.trim()).map(([,n]) => n);
+  if (need.length) { $('err').textContent = 'Fill in: ' + need.join(', ') + '.'; return; }
+  if (!transcripts.length) { $('err').textContent = 'Add at least one interview transcript.'; return; }
+
+  const fd = new FormData($('form'));
+  transcripts.forEach(f => fd.append('transcripts', f, f.name));
+  if (jd) fd.append('jd', jd, jd.name);
+  if (cv) fd.append('resume', cv, cv.name);
+
+  $('go').disabled = true; $('go').textContent = 'Generating…';
+  $('pdfBtn').classList.add('hidden'); $('zipBtn').classList.add('hidden');
+  $('status').textContent = 'Working…';
+  $('stageText').textContent = 'Uploading files';
+  setView('progress');
+  try {
+    const r = await fetch('/api/generate', {method: 'POST', body: fd});
+    const j = await r.json().catch(() => ({error: 'Server returned an unreadable response.'}));
+    if (!r.ok) throw new Error(j.error || 'Generation failed.');
+    await poll(j.job_id);
+  } catch (ex) {
+    $('err').textContent = ex.message;
+    $('status').textContent = 'Generation stopped.';
+    setView('empty');
+  } finally {
+    $('go').disabled = false; $('go').textContent = 'Generate Interview Intelligence';
+  }
+});
+
+async function poll(id){
+  while (true) {
+    await new Promise(r => setTimeout(r, 1500));
+    const r = await fetch('/api/jobs/' + id);
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || 'Lost track of the job.');
+    if (j.status === 'running') { $('stageText').textContent = j.stage; continue; }
+    if (j.status === 'error') throw new Error(j.error);
+    return showResult(id, j.result);
+  }
+}
+
+function showResult(id, res){
+  const base = `/files/${id}/`;
+  $('preview').src = base + encodeURIComponent(res.pdf) + '#view=FitH';
+  $('pdfBtn').href = base + encodeURIComponent(res.pdf) + '?download=1';
+  $('zipBtn').href = base + encodeURIComponent(res.zip) + '?download=1';
+  $('pdfBtn').classList.remove('hidden'); $('zipBtn').classList.remove('hidden');
+  const passed = res.checks.filter(c => c.passed).length;
+  const items = res.checks.map(c =>
+    `<li class="${c.passed ? 'ok' : 'bad'}">${c.passed ? '✓' : '✗'} ${esc(c.check)} <span style="color:var(--faint)">(${esc(c.detail)})</span></li>`).join('');
+  const rej = res.rejected.length ? ` · ${res.rejected.length} unreadable file(s) skipped` : '';
+  $('status').innerHTML =
+    `<b>${res.interviews} candidate interview${res.interviews === 1 ? '' : 's'}</b> from ${res.files} file${res.files === 1 ? '' : 's'}` +
+    (res.duplicates ? ` · ${res.duplicates} duplicate${res.duplicates === 1 ? '' : 's'} removed` : '') + rej +
+    `<details><summary>${passed}/${res.checks.length} quality checks passed</summary><ul>${items}</ul></details>`;
+  setView('pdf');
+}
+function esc(s){ return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+</script>
+</body>
+</html>

@@ -1,0 +1,522 @@
+You are creating a one-page Interview Intelligence Packet for a candidate who has reached Round 2 or higher.
+
+The purpose of this packet is NOT to give generic interview advice.
+
+The packet must be based only on the historical interview transcripts supplied for the SAME company and SAME designation, plus the JD and candidate resume if supplied.
+
+The candidate should be able to scan the final PDF in under 60 seconds and immediately understand:
+
+1. What to revise
+2. What questions to practice
+3. What parts of their experience are likely to be challenged
+4. What topics interviewers repeatedly emphasize
+5. What to prioritize immediately before the interview
+
+--------------------------------------------------
+INPUTS
+--------------------------------------------------
+
+Company:
+[COMPANY NAME]
+
+Designation:
+[DESIGNATION]
+
+Target Round:
+[ROUND 2 / ROUND 3 / ETC.]
+
+Historical interview transcripts:
+[ATTACHED TRANSCRIPT FILES]
+
+Optional Job Description:
+[ATTACHED JD OR "NOT PROVIDED"]
+
+Optional Candidate Resume:
+[ATTACHED RESUME OR "NOT PROVIDED"]
+
+Optional Interview Dates:
+[DATES OR "NOT PROVIDED"]
+
+--------------------------------------------------
+CRITICAL TRANSCRIPT-HANDLING RULE
+--------------------------------------------------
+
+First identify the REAL number of candidate interviews.
+
+Do NOT use the number of transcript files as the number of interviews.
+
+Transcript files may be split into multiple files for the same candidate.
+
+For example:
+
+Google-Sohan-1.vtt
+Google-Sohan-2.vtt
+Google-Sohan-3.vtt
+
+= ONE candidate interview / ONE interview round.
+
+Similarly:
+
+Snorkel AI Goutham -1.vtt
+Snorkel AI Goutham -2.vtt
+
+= ONE candidate interview.
+
+Group files primarily using:
+
+Company + Candidate Name
+
+Treat suffixes such as:
+-1
+-2
+-3
+
+as transcript parts or exports unless the supplied data clearly proves they are separate interview rounds.
+
+Before analysis:
+
+1. List all transcript files.
+2. Normalize candidate names.
+3. Group files by candidate.
+4. Merge transcript parts for each candidate.
+5. Remove exact duplicate transcript exports.
+6. Determine the number of UNIQUE candidate interviews.
+7. Use UNIQUE CANDIDATE INTERVIEWS as the denominator for all frequency calculations.
+
+Example:
+
+7 candidates with 18 transcript files
+= denominator of 7
+NOT denominator of 18.
+
+If RAG appears multiple times across 3 transcript files belonging to one candidate:
+count it as 1 candidate interview containing RAG.
+
+--------------------------------------------------
+ANALYSIS WORKFLOW
+--------------------------------------------------
+
+Analyze the merged candidate interviews.
+
+Do not count casual setup conversation such as:
+audio checks,
+location,
+greetings,
+scheduling,
+camera setup,
+WhatsApp,
+connection issues,
+or other non-interview conversation.
+
+Focus on actual interviewer questions, follow-ups, probes, scenarios, technical discussions, behavioral probes, and candidate-experience deep dives.
+
+Normalize semantically equivalent questions.
+
+For example:
+
+"Tell me about your current ML project."
+
+"Walk me through the AI system you recently built."
+
+"Explain your latest machine-learning project end to end."
+
+should generally be grouped under a common pattern such as:
+
+"Explain your current AI/ML project end to end."
+
+Do not artificially inflate question frequency because wording differs.
+
+--------------------------------------------------
+CALCULATE THESE SECTIONS
+--------------------------------------------------
+
+A. TOP TOPICS / ROUND COVERAGE
+
+Identify the strongest recurring interview themes.
+
+Calculate frequency at candidate-interview level.
+
+Prefer displaying:
+
+Topic                6/7
+Topic                5/7
+
+or percentage if appropriate.
+
+Do not create fake precision.
+
+For small datasets, prefer:
+6/7
+5/7
+4/7
+
+over percentages such as 85.71%.
+
+Include approximately 6–8 important topics.
+
+--------------------------------------------------
+
+B. TOP QUESTIONS
+
+Identify 5–8 highly repeated or highly emphasized question patterns.
+
+Use concise interview-ready wording.
+
+Prioritize questions that:
+- repeat across candidates,
+- generate several follow-up questions,
+- represent high interview depth,
+- or strongly affect preparation value.
+
+Do not include generic interview questions unless they genuinely appeared.
+
+Use star priority:
+
+★★★★★ = highest priority
+★★★★☆ = strong priority
+★★★☆☆ = secondary
+
+--------------------------------------------------
+
+C. RESUME FOCUS
+
+If a candidate resume is supplied:
+
+Compare historical interviewer behavior with the candidate's resume.
+
+Identify which parts of THIS candidate's resume are most likely to be probed.
+
+Examples:
+
+Current Project
+Exact Contribution
+Architecture Decisions
+Production Deployment
+Business Impact
+Model Selection
+LLM / RAG Experience
+
+If NO candidate resume is supplied:
+
+Rename the section:
+
+"Observed Resume Focus"
+
+and show only the areas interviewers historically probe in candidate experience.
+
+Do not pretend the analysis is candidate-specific.
+
+--------------------------------------------------
+
+D. JD FOCUS
+
+If the exact Job Description is supplied:
+
+Compare the JD against actual interview behavior.
+
+Show which JD responsibilities/skills are genuinely emphasized.
+
+For example:
+
+★★★★★ Production ML
+★★★★★ LLM / GenAI
+★★★★☆ Model Evaluation
+★★★★☆ RAG
+★★★☆☆ Cloud / MLOps
+
+If NO JD is supplied:
+
+DO NOT fabricate a JD Focus section.
+
+Rename it:
+
+"Observed Role Focus"
+
+or
+
+"Interview-Derived Role Focus"
+
+and explicitly state:
+
+"Exact JD not supplied; rankings reflect observed interview emphasis."
+
+--------------------------------------------------
+
+E. RECENT TREND
+
+Only calculate true:
+
+↑ Increasing
+→ Stable
+↓ Decreasing
+
+when reliable interview dates or chronological round ordering exist.
+
+If dates are NOT supplied:
+
+Do NOT claim something increased over time.
+
+Instead label the section:
+
+"Interview Direction"
+or
+"Preparation Signal"
+
+You may use:
+
+↑ Higher current preparation signal
+→ Steady/core
+↓ Lower preparation signal
+
+but add a short note:
+
+"Signals reflect recurrence and interviewer emphasis, not chronological change."
+
+Do not interpret transcript suffixes -1, -2, -3 as dates.
+
+--------------------------------------------------
+
+F. REVISION PRIORITY
+
+Rank the final preparation priorities.
+
+Use stars.
+
+Example:
+
+★★★★★ Current AI/ML Project
+★★★★★ Production ML
+★★★★★ LLM / RAG
+★★★★☆ Model Evaluation
+★★★★☆ Python / DSA
+
+Also create a:
+
+"30-Minute Revision Order"
+
+Example:
+
+01 — 10 min — Project story
+02 — 7 min — Production ML
+03 — 5 min — LLM / RAG
+04 — 5 min — Model Evaluation
+05 — 3 min — Python / DSA
+
+The timings should reflect actual interview evidence.
+
+--------------------------------------------------
+
+G. TOMORROW'S INTERVIEW
+
+This must appear near the TOP of the packet.
+
+Divide it into:
+
+REVIEW
+PRACTICE OUT LOUD
+REMEMBER
+
+Example structure:
+
+REVIEW
+★★★★★ Current Project
+★★★★★ Production ML
+★★★★☆ RAG
+★★★★☆ Model Evaluation
+
+PRACTICE OUT LOUD
+★★★★★ Project walkthrough
+★★★★★ Production failure scenario
+★★★★☆ RAG architecture
+★★★★☆ Model trade-offs
+
+REMEMBER
+✓ State your exact contribution
+✓ Explain trade-offs
+✓ Quantify impact
+✓ Clarify assumptions first
+
+Avoid generic tips unless there is clear value.
+
+--------------------------------------------------
+DESIGN REQUIREMENTS
+--------------------------------------------------
+
+Create a PROFESSIONAL ONE-PAGE PDF.
+
+Do not copy any previously supplied sample or reference design.
+
+Develop the visual hierarchy independently.
+
+Design goal:
+
+"Executive briefing card for an interview candidate."
+
+The document should feel:
+- modern
+- premium
+- extremely scannable
+- clean
+- visually balanced
+- information-dense without feeling crowded
+
+Prefer:
+- white or very light background
+- one strong dark accent
+- one primary highlight color
+- amber/gold stars
+- restrained green/red for trend indicators
+- strong typography
+- generous alignment
+- subtle rules/separators
+
+Avoid:
+- excessive boxes
+- excessive borders
+- heavy grids
+- unnecessary icons
+- decorative charts
+- dense paragraphs
+- duplicated information
+- tiny unreadable text
+- random HIGH/MEDIUM badges
+- visual clutter
+
+Stars should be the primary priority indicator.
+
+Use bars/dots only when they materially help communicate candidate-level interview frequency.
+
+--------------------------------------------------
+LAYOUT HIERARCHY
+--------------------------------------------------
+
+Recommended hierarchy:
+
+HEADER
+Company
+Designation
+Target Round
+Number of candidate interviews analyzed
+
+↓
+
+TOMORROW'S INTERVIEW
+Review | Practice | Remember
+
+↓
+
+MAIN INTELLIGENCE
+
+Left:
+Round Coverage / Top Topics
+Resume Focus
+
+Right:
+Top Questions
+Interview Direction / Trend
+
+↓
+
+BOTTOM
+
+Observed Role Focus / JD Focus
+30-Minute Revision Order
+
+--------------------------------------------------
+DATA ACCURACY
+--------------------------------------------------
+
+Never invent statistics.
+
+Never use transcript-file count as interview count.
+
+Never create fake JD alignment.
+
+Never claim chronological trends without dates.
+
+Never infer an official designation without labeling it as inferred.
+
+Never include generic interview advice just to fill space.
+
+All percentages/counts must be explainable from the transcript pool.
+
+For small datasets, candidate counts are preferred.
+
+Example:
+
+3/3 interviews
+2/3 interviews
+
+instead of:
+100%
+66.7%
+
+--------------------------------------------------
+QUALITY CHECK BEFORE FINALIZING
+--------------------------------------------------
+
+Before delivering the file:
+
+1. Render the PDF as an image.
+2. Visually inspect the entire page.
+3. Confirm nothing is clipped.
+4. Confirm Revision Priority is fully visible.
+5. Confirm all columns align.
+6. Confirm stars render properly.
+7. Confirm there are no broken glyphs.
+8. Confirm no text overlaps.
+9. Confirm all content fits on ONE PAGE.
+10. Confirm the candidate can scan the packet in under one minute.
+11. Verify that all interview counts use unique candidate interviews.
+12. Verify Company and Designation spelling.
+
+If layout issues exist, fix them before delivering.
+
+--------------------------------------------------
+OUTPUT
+--------------------------------------------------
+
+Create:
+
+[COMPANY]_[DESIGNATION]_Interview_Intelligence_Packet.pdf
+
+Also create, if possible:
+
+[COMPANY]_[DESIGNATION]_Interview_Intelligence_Package.zip
+
+The ZIP should contain:
+
+1. Final PDF
+2. PDF preview PNG
+3. Methodology_and_Notes.txt
+4. Evidence_Matrix.csv
+
+Evidence_Matrix.csv should show candidate-level topic occurrence.
+
+Example:
+
+Topic,Candidate 1,Candidate 2,Candidate 3,Occurrence
+Production ML,Yes,Yes,Yes,3/3
+RAG,Yes,No,Yes,2/3
+Python,No,Yes,Yes,2/3
+
+Methodology_and_Notes.txt should document:
+
+- Number of transcript files supplied
+- Number of unique candidates
+- Number of unique interview rounds
+- Which transcript files were merged
+- Which duplicates were removed
+- Frequency denominator used
+- Whether JD was supplied
+- Whether resume was supplied
+- Whether chronological trend analysis was possible
+
+FINAL RESPONSE:
+
+Do not dump the full analysis into chat.
+
+Return a short confirmation and provide direct links to:
+
+1. Final PDF
+2. ZIP package, if created
