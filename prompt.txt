@@ -1,10 +1,10 @@
-You are creating a one-page Interview Intelligence Packet for a candidate who has reached Round 2 or higher.
+You are creating a one-page Interview Intelligence Packet for a candidate who has reached Initial to higher.( N = Initial , one , two .... Final )
 
 The purpose of this packet is NOT to give generic interview advice.
 
-The packet must be based only on the historical interview transcripts supplied for the SAME company and SAME designation, plus the JD and candidate resume if supplied.
+The interview packet must be based only on historical interview transcripts provided for the same company and the same designation.
 
-The candidate should be able to scan the final PDF in under 60 seconds and immediately understand:
+If no historical transcript is available, generate the interview questions based on the round number, company, and role, using the known interview patterns and previous history of that company for similar rounds. Also consider the job description (JD) and the candidate’s resume, if provided. The questions should reflect what the candidate is realistically likely to be asked in that specific interview round. The candidate should be able to scan the final PDF in under 60 seconds and immediately understand:
 
 1. What to revise
 2. What questions to practice
@@ -23,9 +23,9 @@ Designation:
 [DESIGNATION]
 
 Target Round:
-[ROUND 2 / ROUND 3 / ETC.]
+[ROUND Initial / ROUND 1 / ETC.]
 
-Historical interview transcripts:
+Optional Historical interview transcripts:
 [ATTACHED TRANSCRIPT FILES]
 
 Optional Job Description:
