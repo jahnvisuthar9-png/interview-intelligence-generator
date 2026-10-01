@@ -2,7 +2,7 @@ You are creating a one-page Interview Intelligence Packet for a candidate who ha
 
 The purpose of this packet is NOT to give generic interview advice.
 
-The interview packet must be based only on historical interview transcripts provided for the same company and the same designation.
+When historical interview transcripts are provided, the interview packet must be based on those transcripts for the same company and the same designation, while also considering every other supplied input: target round, JD, candidate resume and interview dates. Questions must reflect both the transcripts and the target round.
 
 If no historical transcript is available, generate the interview questions based on the round number, company, and role, using the known interview patterns and previous history of that company for similar rounds. Also consider the job description (JD) and the candidate’s resume, if provided. The questions should reflect what the candidate is realistically likely to be asked in that specific interview round. The candidate should be able to scan the final PDF in under 60 seconds and immediately understand:
 

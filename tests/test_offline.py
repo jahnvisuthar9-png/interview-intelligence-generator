@@ -34,8 +34,16 @@ class FakeLLM:
                     "experience_probes": ["exact contribution"], "round_evidence": "", "date_evidence": ""}
         if name == "role_based_packet":
             assert "ROLE-BASED MODE" in system and "NOT PROVIDED" in user
+            assert "YOUR OWN KNOWLEDGE" in system and "Use only the supplied material" not in system
             return ROLE_RESPONSE
-        ids = json.loads(user)["interview_ids"]
+        payload = json.loads(user)
+        if "interview_rounds" in payload:  # aggregate stage: every field + round info must be present
+            assert "TARGET ROUND" in system and "Use EVERY supplied input" in system
+            for k in ("company", "designation", "target_round", "interview_dates", "job_description",
+                      "candidate_resume", "interview_rounds", "per_interview_extractions"):
+                assert k in payload, k
+            assert all("file_names" in r for r in payload["interview_rounds"])
+        ids = payload["interview_ids"]
         occ = lambda k: [{"interview_id": i, "evidence": "asked"} for i in ids[:k]]
         return {
             "topics": [

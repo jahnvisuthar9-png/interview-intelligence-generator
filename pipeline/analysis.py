@@ -59,13 +59,21 @@ behavioral probe and experience deep dive. Merge follow-ups into the question th
 ("Explain your current AI/ML project end to end.") and give a short topic label.
 experience_probes = which parts of the candidate's own experience were challenged
 (e.g. exact contribution, production deployment, model selection, business impact).
-round_evidence / date_evidence: only explicit mentions in the text, else "".
+round_evidence: which round this interview was (e.g. "Round 2", "initial screen", "final",
+"hiring manager"), from explicit mentions in the text or the transcript file names, else "".
+date_evidence: only explicit date mentions in the text, else "".
 Do not include anything that was not actually asked.
 """
 
 AGGREGATE_TASK = """
 Perform sections A-G (CALCULATE THESE SECTIONS) across ALL merged candidate interviews, using the
-per-interview extractions supplied. Interview ids (C1, C2, ...) are the UNIQUE CANDIDATE
+per-interview extractions supplied. Use EVERY supplied input: company, designation, TARGET ROUND,
+interview dates, JD and resume (when supplied), alongside the transcripts.
+TARGET ROUND: the packet prepares the candidate for the target round. Each interview's round
+evidence is supplied; when choosing and ranking top_questions, topics emphasis, tomorrow and
+revision priorities, weight most heavily the questions asked in the same or most similar round,
+and what this company's target round is known to focus on. Questions must still be patterns that
+genuinely appeared in the transcripts; the round decides their priority and order. Interview ids (C1, C2, ...) are the UNIQUE CANDIDATE
 INTERVIEWS; the app computes every count as (interviews listed) / (total interviews), so:
 - topics (A): 6-8 recurring themes, normalized semantically. For each topic list EVERY interview
   id in which it genuinely appeared, with a short evidence phrase from that interview's
@@ -182,8 +190,10 @@ def run(inputs: Inputs, llm, progress: Callable[[str], None] = lambda m: None) -
     progress(f"Analyzing {len(groups)} candidate interview(s)")
 
     def extract(grp: InterviewGroup) -> dict:
+        names = ", ".join(f.filename for f in files if f.file_id in grp.file_ids)
         user = (f"Company: {inputs.company}\nDesignation: {inputs.designation}\n"
-                f"Target Round: {inputs.target_round}\nInterview id: {grp.interview_id}\n\n"
+                f"Target Round: {inputs.target_round}\nInterview id: {grp.interview_id}\n"
+                f"Transcript file names: {names}\n\n"
                 f"MERGED TRANSCRIPT:\n{grp.merged_text}")
         out = llm.structured(_system(EXTRACTION_TASK), user, EXTRACTION_SCHEMA, "interview_extraction")
         out["interview_id"] = grp.interview_id
@@ -217,6 +227,11 @@ def run(inputs: Inputs, llm, progress: Callable[[str], None] = lambda m: None) -
         "interview_dates": inputs.interview_dates.strip() or "NOT PROVIDED",
         "job_description": inputs.jd[1] if inputs.jd else "NOT PROVIDED",
         "candidate_resume": inputs.resume[1] if inputs.resume else "NOT PROVIDED",
+        "interview_rounds": [{"interview_id": g.interview_id,
+                              "round_label_from_grouping": g.round_label or "unknown",
+                              "round_evidence_in_transcript": e.get("round_evidence") or "none",
+                              "file_names": [f.filename for f in files if f.file_id in g.file_ids]}
+                             for g, e in zip(kept_groups, kept_ex)],
         "per_interview_extractions": kept_ex,
     }, ensure_ascii=False)
     a = llm.structured(_system(AGGREGATE_TASK), agg_user, ANALYSIS_SCHEMA, "interview_intelligence")
@@ -350,8 +365,9 @@ def _shared_sections(a: dict) -> dict:
 
 # ------------------------------------------------------------------ role-based mode
 ROLE_TASK = """
-Build every packet section for the target round from the designation, round, company and any
-JD / resume supplied (see ROLE-BASED MODE above):
+Build every packet section for the target round from the company, designation, round, any JD /
+resume supplied, and your own knowledge of how this company interviews for this role and round
+(see ROLE-BASED MODE above):
 - topics: 6-8 topics this round is most likely to cover for this designation, with stars for
   expected emphasis and a short basis (JD line, resume item, or the role/round itself).
 - top_questions: 5-8 likely question patterns, concise and interview-ready, with stars.
@@ -396,7 +412,8 @@ def validate_role(a: dict, inputs: Inputs) -> dict:
     shared = _shared_sections(a)
     has_resume, has_jd = inputs.resume is not None, inputs.jd is not None
     parts = ["designation", "interview round"] + (["JD"] if has_jd else []) + (["resume"] if has_resume else [])
-    source = ", ".join(parts[:-1]) + " and " + parts[-1]
+    source = (", ".join(parts[:-1]) + " and " + parts[-1] +
+              f", plus the model's general knowledge of {inputs.company.strip()}'s interview style")
     topics = [{"name": _clean(t.get("name", ""), 60), "stars": _clamp_stars(t.get("stars")),
                "basis": _clean(t.get("basis", ""), 200)}
               for t in a.get("topics", []) if _clean(t.get("name", ""), 60)]

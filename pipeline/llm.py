@@ -108,14 +108,22 @@ ROLE-BASED MODE (no historical transcripts supplied)
 ==================================================
 The user supplied NO historical interview transcripts. The transcript-handling, frequency and
 candidate-count rules above therefore cannot be applied, and you must not pretend they were.
-Instead, build the same packet sections from what WAS supplied: company, designation, target
-round, and the JD and/or candidate resume if present. Follow every other rule in prompt.txt
-(no generic filler, no invented statistics, stars as the priority indicator, JD Focus only if a
-JD is supplied, Resume Focus only if a resume is supplied, no chronological trend claims).
-- Never output counts, percentages or "X of Y interviews"; nothing here was observed.
-- Everything is an expectation for this designation and round, grounded in the JD/resume text
-  when supplied; say so in each "basis".
-- Do not claim knowledge of this company's actual interview questions unless it is in the JD.
+Instead, build the same packet sections from the other fields: company, designation, target round,
+and the JD and/or candidate resume if present, combined with YOUR OWN KNOWLEDGE of how this
+company interviews for this role at this round (its known process, round structure, question
+style, focus areas and reported interview patterns for similar roles and rounds).
+- Questions must be what this company realistically asks in THIS round for THIS role, not
+  generic or random interview questions. If the round is an early/initial screen, reflect a
+  screen; if it is a coding, system-design, hiring-manager, behavioral or final round, reflect
+  that. If you know little about this company, use the closest well-known patterns for its
+  size, industry and this role, and say so in the caveats.
+- Tailor to the JD (required skills, responsibilities) and the resume (projects and claims most
+  likely to be probed) when supplied.
+- Follow every other rule in prompt.txt (no generic filler, stars as the priority indicator, JD
+  Focus only if a JD is supplied, Resume Focus only if a resume is supplied, no chronological
+  trend claims).
+- Never output counts, percentages or "X of Y interviews"; nothing here was observed. In each
+  "basis", say where it comes from (company interview pattern, round, JD line or resume item).
 """
 
 APP_ADDENDUM = """
@@ -125,8 +133,8 @@ APP INTEGRATION NOTES (added by the Interview Intelligence Generator app)
 The instructions above (prompt.txt) are the source of truth and override anything here.
 This app splits prompt.txt into stages and renders the PDF, ZIP, CSV and methodology itself.
 In this call you perform ONLY the stage described below and return JSON that matches the
-supplied schema exactly. Never invent statistics, questions, JD alignment, trends, dates,
-or candidate information. Use only the supplied material.
+supplied schema exactly. Never invent statistics, JD alignment, trends, dates or candidate
+information. When transcripts are supplied, topics and questions must come from them.
 """
 
 
