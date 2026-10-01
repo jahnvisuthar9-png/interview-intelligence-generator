@@ -39,6 +39,14 @@ JOBS: dict[str, dict] = {}
 LOCK = threading.Lock()
 
 
+def _log(msg: str) -> None:
+    """Logging must never break a job."""
+    try:
+        print(msg, flush=True)
+    except Exception:
+        pass
+
+
 def _set(job_id: str, **kw):
     with LOCK:
         JOBS[job_id].update(kw)
@@ -63,11 +71,21 @@ def _read_upload(storage) -> tuple[str, str]:
 
 
 def _worker(job_id: str, inputs: Inputs):
+    started = time.time()
+    _log(f"[job {job_id[:8]}] started: {inputs.company} / {inputs.designation} / {inputs.target_round}, "
+          f"{len(inputs.transcripts)} transcript file(s), JD={'yes' if inputs.jd else 'no'}, "
+          f"resume={'yes' if inputs.resume else 'no'}")
     try:
         llm = OpenAIClient()
         packet = run(inputs, llm, progress=lambda m: _set(job_id, stage=m), cache_dir=OUTPUT / "_cache")
+        t_model = time.time() - started
         _set(job_id, stage="Building and checking the one-page PDF")
         out = build_all(packet, OUTPUT / job_id)
+        calls = len(getattr(llm, "used_models", []))
+        _log(f"[job {job_id[:8]}] done in {time.time() - started:.1f}s (analysis {t_model:.1f}s, "
+              f"PDF {time.time() - started - t_model:.1f}s), API calls: {calls}, model: "
+              f"{packet['meta'].get('model')}, checks passed: "
+              f"{sum(c['passed'] for c in out['checks'])}/{len(out['checks'])}")
         _set(job_id, status="done", stage="Done", result={
             "pdf": out["pdf"], "zip": out["zip"], "checks": out["checks"], "fixes": out["fixes"],
             "interviews": packet["n"], "files": len(packet["meta"]["transcript_files"]),
@@ -75,9 +93,14 @@ def _worker(job_id: str, inputs: Inputs):
             "rejected": packet["meta"]["rejected_files"],
         })
     except (LLMError, ValueError, ExtractionError) as e:
+        _log(f"[job {job_id[:8]}] FAILED after {time.time() - started:.1f}s: {e}")
         _set(job_id, status="error", error=str(e))
-    except Exception as e:  # pragma: no cover
-        traceback.print_exc()
+    except BaseException as e:  # pragma: no cover - a job must never stay "running" forever
+        _log(f"[job {job_id[:8]}] CRASHED after {time.time() - started:.1f}s: {e!r}")
+        try:
+            traceback.print_exc()
+        except Exception:
+            pass
         _set(job_id, status="error", error=f"Unexpected error: {e}")
 
 

@@ -165,7 +165,7 @@ details ul{margin:6px 0 0;padding-left:18px}
         Fill in the company, designation and round. Add transcripts, a JD or a resume if you have them, then generate. The packet preview appears here.
       </div>
       <div class="progress hidden" id="progress"><div class="spinner"></div><div id="stageText">Reading files</div>
-        <div class="hint">Analysis usually takes 1 to 3 minutes.</div></div>
+        <div class="hint" id="elapsed">0 s</div></div>
     </div>
     <iframe id="preview" class="hidden" title="Generated packet preview"></iframe>
   </main>
@@ -174,7 +174,7 @@ details ul{margin:6px 0 0;padding-left:18px}
 <script>
 const $ = id => document.getElementById(id);
 let transcripts = [];
-let jd = null, cv = null;
+let jd = null, cv = null, lastSeconds = 0;
 
 function bindDrop(drop, input, onFiles){
   drop.addEventListener('click', () => input.click());
@@ -255,6 +255,9 @@ $('form').addEventListener('submit', async e => {
   $('pdfBtn').classList.add('hidden'); $('zipBtn').classList.add('hidden');
   $('status').textContent = 'Working…';
   $('stageText').textContent = 'Uploading files';
+  const t0 = Date.now();
+  $('elapsed').textContent = '0 s';
+  const timer = setInterval(() => { $('elapsed').textContent = Math.round((Date.now() - t0) / 1000) + ' s'; }, 1000);
   setView('progress');
   try {
     const r = await fetch('/api/generate', {method: 'POST', body: fd});
@@ -266,6 +269,9 @@ $('form').addEventListener('submit', async e => {
     $('status').textContent = 'Generation stopped.';
     setView('empty');
   } finally {
+    clearInterval(timer);
+    lastSeconds = Math.round((Date.now() - t0) / 1000);
+    if ($('status').querySelector('b')) $('status').querySelector('b').insertAdjacentText('afterend', ` · ${lastSeconds} s`);
     $('go').disabled = false; $('go').textContent = 'Generate Interview Intelligence';
   }
 });

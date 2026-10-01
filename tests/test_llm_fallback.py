@@ -91,6 +91,26 @@ def main():
     except L.LLMError as e:
         assert "API key was rejected" in str(e)
         print("bad key ->", e)
+    # 6. Your exact 400 "Unsupported field: response_format" -> same model retried without it.
+    os.environ.update(OPENAI_API_KEY="test", OPENAI_MODEL="some-new-model", OPENAI_FALLBACK_MODELS="")
+    c = L.OpenAIClient()
+    sent = []
+
+    def create(**kw):
+        sent.append(kw)
+        if "response_format" in kw:
+            raise err(openai.BadRequestError, 400, "Error code: 400 - {'error': {'message': 'Unsupported field: "
+                      "response_format.', 'type': 'invalid_request_error', 'param': 'response_format'}}")
+        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(
+            content='```json\n{"ok": true}\n```', refusal=None))])
+
+    c.client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    assert c.structured("SYS", "u", {"type": "object"}, "role_based_packet") == {"ok": True}
+    assert "response_format" in sent[0] and "response_format" not in sent[1]
+    assert "OUTPUT FORMAT" in sent[1]["messages"][0]["content"] and sent[1]["model"] == "some-new-model"
+    c.structured("SYS", "u", {"type": "object"}, "second")  # remembered: no rejected attempt again
+    assert len(sent) == 3 and "response_format" not in sent[2]
+    print("response_format rejected -> retried without it, fenced JSON parsed:", c.events[0])
     print("ALL FALLBACK TESTS PASSED")
 
 

@@ -204,6 +204,7 @@ class OpenAIClient:
         self.models = [self.model] + [m for m in fallbacks if m != self.model]
         self.max_retries = int(os.environ.get("OPENAI_MAX_RETRIES", "3"))
         self._exhausted: set[str] = set()   # models whose daily quota ran out during this job
+        self._no_response_format: set[str] = set()  # models that reject the response_format field
         self.used_models: list[str] = []
         self.events: list[str] = []
 
@@ -216,13 +217,20 @@ class OpenAIClient:
         effort = os.environ.get("OPENAI_REASONING_EFFORT", "").strip()
         if effort:  # optional speed knob; unset = model default (best quality)
             extra["reasoning_effort"] = effort
+        if model in self._no_response_format:
+            # This model/provider rejects response_format: give the exact JSON shape in the
+            # instructions instead. The app validates and cleans the result as usual.
+            system = (system + "\n\nOUTPUT FORMAT: reply with ONE JSON object only (no markdown, no "
+                      "code fences, no text before or after) that matches this JSON Schema exactly, "
+                      "with every listed property present:\n" + json.dumps(schema, ensure_ascii=False))
+        else:
+            extra["response_format"] = {"type": "json_schema",
+                                        "json_schema": {"name": name, "strict": True, "schema": schema}}
         return self.client.chat.completions.create(
             **extra,
             model=model,
             messages=[{"role": "system", "content": system},
                       {"role": "user", "content": user}],
-            response_format={"type": "json_schema",
-                             "json_schema": {"name": name, "strict": True, "schema": schema}},
         )
 
     def structured(self, system: str, user: str, schema: dict, name: str) -> dict:
@@ -261,6 +269,13 @@ class OpenAIClient:
                     if attempt > self.max_retries:
                         raise LLMError(f"The AI service did not respond ({name}): {_short(e)}") from e
                     time.sleep(min(2 ** attempt, 20))
+                except openai.BadRequestError as e:
+                    if "response_format" in str(e) and model not in self._no_response_format:
+                        self._no_response_format.add(model)
+                        self.events.append(f"{model}: does not accept response_format; the JSON shape was "
+                                           "given in the instructions instead.")
+                        continue  # same model, same request, without the unsupported field
+                    raise LLMError(f"The AI service rejected the request ({name}): {_short(e)}") from e
                 except openai.AuthenticationError as e:
                     raise LLMError("The API key was rejected. Check OPENAI_API_KEY in Render > "
                                    "Environment (copy it again with the copy button).") from e
@@ -285,8 +300,17 @@ class OpenAIClient:
         choice = resp.choices[0]
         if getattr(choice.message, "refusal", None):
             raise LLMError(f"The model refused the {name} request: {choice.message.refusal}")
-        content = choice.message.content or ""
+        content = (choice.message.content or "").strip()
         try:
             return json.loads(content)
-        except json.JSONDecodeError as e:
-            raise LLMError(f"The model returned invalid JSON for {name}.") from e
+        except json.JSONDecodeError:
+            pass
+        # Tolerate code fences or stray text around the JSON object.
+        text = re.sub(r"^```(?:json)?\s*|\s*```$", "", content)
+        start, end = text.find("{"), text.rfind("}")
+        if start != -1 and end > start:
+            try:
+                return json.loads(text[start:end + 1])
+            except json.JSONDecodeError:
+                pass
+        raise LLMError(f"The model returned invalid JSON for {name}.")
