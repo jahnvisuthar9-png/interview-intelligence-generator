@@ -73,7 +73,8 @@ def _read_upload(storage) -> tuple[str, str]:
 def _worker(job_id: str, inputs: Inputs):
     started = time.time()
     _log(f"[job {job_id[:8]}] started: {inputs.company} / {inputs.designation} / {inputs.target_round}, "
-          f"{len(inputs.transcripts)} transcript file(s), JD={'yes' if inputs.jd else 'no'}, "
+          f"{len(inputs.transcripts)} transcript file(s), round info={'yes' if inputs.round_info else 'no'}, "
+          f"JD={'yes' if inputs.jd else 'no'}, "
           f"resume={'yes' if inputs.resume else 'no'}")
     try:
         llm = OpenAIClient()
@@ -123,6 +124,7 @@ def generate():
     designation = (request.form.get("designation") or "").strip()
     target_round = (request.form.get("target_round") or "").strip()
     dates = (request.form.get("interview_dates") or "").strip()
+    round_info = (request.form.get("round_info") or "").strip()[:2000]
     missing = [n for n, v in (("Company", company), ("Designation", designation),
                               ("Target round", target_round)) if not v]
     if missing:
@@ -173,7 +175,9 @@ def generate():
     (OUTPUT / job_id).mkdir(parents=True)
     with LOCK:
         JOBS[job_id] = {"status": "running", "stage": "Reading files", "error": None, "result": None}
-    inputs = Inputs(company, designation, target_round, transcripts, jd, resume, dates, rejected)
+    inputs = Inputs(company=company, designation=designation, target_round=target_round,
+                    transcripts=transcripts, jd=jd, resume=resume, interview_dates=dates,
+                    round_info=round_info, rejected_files=rejected)
     threading.Thread(target=_worker, args=(job_id, inputs), daemon=True).start()
     return jsonify(job_id=job_id)
 

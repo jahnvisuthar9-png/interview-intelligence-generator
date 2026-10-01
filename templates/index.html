@@ -119,6 +119,13 @@ details ul{margin:6px 0 0;padding-left:18px}
       </div>
 
       <div class="field">
+        <label for="round_info">Round info <span class="opt">optional</span></label>
+        <textarea id="round_info" name="round_info" rows="2" style="min-height:58px"
+          placeholder="e.g. Coding round, 2 DSA problems, 45 min · System design with a senior engineer · Hiring manager, behavioral"></textarea>
+        <div class="hint">Describe the round type or format. It shapes which questions the packet focuses on.</div>
+      </div>
+
+      <div class="field">
         <span class="label">Interview transcripts <span class="opt">optional</span></span>
         <div class="drop" id="tDrop" tabindex="0" role="button" aria-label="Add transcript files">
           <strong>Add transcripts</strong> or drop them here
@@ -223,14 +230,17 @@ single('cvDrop', 'cvInput', 'cvClear', 'Add resume', f => { cv = f; updateMode()
 
 function updateMode(){
   const hasJD = !!jd || $('jd_text').value.trim().length > 0;
-  const extras = [hasJD && 'JD', cv && 'resume'].filter(Boolean);
+  const hasRound = $('round_info').value.trim().length > 0;
+  const extras = [hasRound && 'round info', hasJD && 'JD', cv && 'resume'].filter(Boolean);
   $('mode').textContent = transcripts.length
     ? `Evidence-based packet from ${transcripts.length} transcript file${transcripts.length > 1 ? 's' : ''}` +
-      (extras.length ? ` plus ${extras.join(' and ')}.` : '.')
+      (extras.length ? ` plus ${extras.join(', ')}` : '') +
+      (hasRound ? '; transcript questions matching the round info come first.' : '.')
     : 'No transcripts: the packet will be predicted from the designation and round' +
       (extras.length ? `, ${extras.join(' and ')}` : '') + ', with no interview counts.';
 }
 $('jd_text').addEventListener('input', updateMode);
+$('round_info').addEventListener('input', updateMode);
 
 function setView(mode){
   $('empty').classList.toggle('hidden', mode !== 'empty');

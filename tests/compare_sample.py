@@ -27,7 +27,10 @@ rn, rsize, rtext = info(REF); on, osize, otext = info(ours)
 print(f"pages ref={rn} ours={on}; size ref={rsize} ours={osize}")
 sections = ["REVIEW", "PRACTICE OUT LOUD", "REMEMBER", "ROUND COVERAGE / TOP TOPICS", "OBSERVED RESUME FOCUS",
             "TOP QUESTIONS", "PREPARATION SIGNAL", "INTERVIEW-DERIVED ROLE FOCUS", "REVISION PRIORITY",
-            "30-MINUTE REVISION ORDER", "CANDIDATE INTERVIEWS ANALYZED", "TARGET: ROUND 2"]
+            "30-MINUTE REVISION ORDER", "CANDIDATE INTERVIEWS ANALYZED"]
+# Intentional change after the sample: with transcripts the round NUMBER is not shown in the header
+# (the round TYPE is shown instead), so "TARGET: ROUND 2" is expected only in the reference.
+print("ok  round number hidden with transcripts:", "TARGET: ROUND 2" not in otext)
 for s in sections:
     print(f"{'ok ' if (s in rtext) == (s in otext) else 'DIFF'} {s:32} ref={s in rtext} ours={s in otext}")
 counts = lambda t: sorted(re.findall(r"\b\d{1,2}/10\b", t))

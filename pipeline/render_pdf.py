@@ -356,8 +356,22 @@ class _OrderRow(Block):
 
 def _subtitle(packet, ctx):
     sep = '&nbsp;&nbsp;<font color="#B4BCCB">|</font>&nbsp;&nbsp;'
-    line2 = sep.join([ctx.safe(packet["company"]), ctx.safe(packet["designation"]),
-                      ctx.safe("Target: " + packet["target_round"])])
+    parts = [packet["company"], packet["designation"]]
+    rt = packet.get("round_type") or {}
+    label = (rt.get("label") or "").strip()
+    if label:
+        tag = "from round info" if rt.get("source") == "round info" else (
+            "inferred from transcripts" if rt.get("source") == "transcripts" else "inferred")
+        round_type_text = f"{label} ({tag})"
+    else:
+        round_type_text = ""
+    if packet.get("mode") == "role":
+        parts.append("Target: " + packet["target_round"])   # no transcripts: round number matters
+    # with transcripts the round number is deprioritized and not shown; the round type is
+    if round_type_text:
+        parts.append(round_type_text)
+    # keep each short item on one line so wrapping happens only between items
+    line2 = sep.join(ctx.safe(x).replace(" ", "&nbsp;") if len(x) <= 45 else ctx.safe(x) for x in parts)
     p = Paragraph(line2, ctx.style(10, "Inter-Medium", MUTED))
     pw = CONTENT_W
     return p, pw, p.wrap(pw, 1000)[1]

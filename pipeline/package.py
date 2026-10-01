@@ -103,6 +103,9 @@ def _role_methodology(packet: dict, checks: list[dict], fixes: list[str]) -> str
         f"Company: {packet['company']}",
         f"Designation: {packet['designation']} (as entered by the user)",
         f"Target round: {packet['target_round']}",
+        f"Round info: {packet.get('round_info') or 'not supplied'}",
+        f"Round type used: {(packet.get('round_type') or {}).get('label') or 'not determined'} "
+        f"(source: {(packet.get('round_type') or {}).get('source', 'n/a')})",
         f"Generated: {m['generated']}   Model: {m.get('model', 'unknown')}",
         "Rules source: prompt.txt (sent unmodified), plus role-based mode instructions",
         "",
@@ -141,7 +144,11 @@ def methodology(packet: dict, checks: list[dict], fixes: list[str]) -> str:
     add(f"INTERVIEW INTELLIGENCE PACKET - METHODOLOGY AND NOTES")
     add(f"Company: {packet['company']}")
     add(f"Designation: {packet['designation']} (as entered by the user)")
-    add(f"Target round: {packet['target_round']}")
+    add(f"Target round: {packet['target_round']} (secondary hint when transcripts are supplied; not shown on the PDF)")
+    add(f"Round info: {packet.get('round_info') or 'not supplied'}")
+    rt = packet.get("round_type") or {}
+    add(f"Round type used: {rt.get('label') or 'not determined'} (source: {rt.get('source', 'n/a')})")
+    add("Priority with transcripts: transcripts > round info > JD/resume > round number")
     add(f"Generated: {m['generated']}   Model: {m.get('model', 'unknown')}")
     add("Rules source: prompt.txt (sent unmodified with every model call)")
     add("")

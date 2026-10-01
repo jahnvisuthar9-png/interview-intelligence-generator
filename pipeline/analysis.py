@@ -28,6 +28,7 @@ class Inputs:
     jd: tuple[str, str] | None = None           # (source label, text): file name and/or "pasted text"
     resume: tuple[str, str] | None = None
     interview_dates: str = ""
+    round_info: str = ""                        # optional free text: type/format of the round
     rejected_files: list[tuple[str, str]] = field(default_factory=list)  # (filename, reason)
 
 
@@ -68,13 +69,20 @@ Do not include anything that was not actually asked.
 
 AGGREGATE_TASK = """
 Perform sections A-G (CALCULATE THESE SECTIONS) across ALL merged candidate interviews, using the
-per-interview extractions supplied. Use EVERY supplied input: company, designation, TARGET ROUND,
-interview dates, JD and resume (when supplied), alongside the transcripts.
-TARGET ROUND: the packet prepares the candidate for the target round. Each interview's round
-evidence is supplied; when choosing and ranking top_questions, topics emphasis, tomorrow and
-revision priorities, weight most heavily the questions asked in the same or most similar round,
-and what this company's target round is known to focus on. Questions must still be patterns that
-genuinely appeared in the transcripts; the round decides their priority and order. Interview ids (C1, C2, ...) are the UNIQUE CANDIDATE
+per-interview extractions supplied. Use EVERY supplied input: company, designation, ROUND INFO, interview dates, JD
+and resume (when supplied), alongside the transcripts.
+PRIORITY ORDER: (1) the transcripts, (2) ROUND INFO, (3) JD and resume, (4) TARGET ROUND number.
+- Questions and topics must be patterns that genuinely appeared in the transcripts.
+- ROUND INFO (when supplied) decides which transcript questions matter most: for a coding round
+  put coding/DSA problems and technical questions first; for system design put design questions
+  first; for behavioral / hiring-manager rounds put behavioral and experience probes first; and so
+  on. Use it the same way for topics, tomorrow and revision priorities.
+- The TARGET ROUND number is only a secondary hint; do not let it override the transcripts or the
+  round info. Each interview's round evidence is supplied; prefer interviews of the same round type.
+- round_type: the type of round this packet prepares for. label = short name such as "Coding
+  round", "System design round", "Technical screen", "Behavioral / hiring manager round";
+  source = "round info" if ROUND INFO was supplied, otherwise "transcripts" (inferred from what
+  the transcripts show). Interview ids (C1, C2, ...) are the UNIQUE CANDIDATE
 INTERVIEWS; the app computes every count as (interviews listed) / (total interviews), so:
 - topics (A): 6-8 recurring themes, normalized semantically. For each topic list EVERY interview
   id in which it genuinely appeared, with a short evidence phrase from that interview's
@@ -195,7 +203,7 @@ def _snippet(text: str) -> str:
 
 
 # ------------------------------------------------------------------ pipeline
-CACHE_VERSION = "3"  # bump when analysis logic changes so old cached results are not reused
+CACHE_VERSION = "4"  # bump when analysis logic changes so old cached results are not reused
 
 
 def cache_key(inputs: Inputs, llm) -> str:
@@ -210,6 +218,7 @@ def cache_key(inputs: Inputs, llm) -> str:
         "company": inputs.company.strip().lower(),
         "designation": inputs.designation.strip().lower(),
         "round": inputs.target_round.strip().lower(),
+        "round_info": inputs.round_info.strip(),
         "dates": inputs.interview_dates.strip(),
         "transcripts": sorted([n, t] for n, t in inputs.transcripts),
         "jd": inputs.jd[1] if inputs.jd else None,
@@ -270,6 +279,7 @@ def _run(inputs: Inputs, llm, progress: Callable[[str], None] = lambda m: None) 
         "company": inputs.company,
         "designation": inputs.designation,
         "target_round": inputs.target_round,
+        "round_info": inputs.round_info.strip() or "NOT PROVIDED",
         "interview_dates": inputs.interview_dates.strip() or "NOT PROVIDED",
         "job_description": inputs.jd[1] if inputs.jd else "NOT PROVIDED",
         "candidate_resume": inputs.resume[1] if inputs.resume else "NOT PROVIDED",
@@ -474,6 +484,8 @@ def validate(a: dict, inputs: Inputs, n: int, valid_ids: list[str], extractions:
 
     has_resume, has_jd = inputs.resume is not None, inputs.jd is not None
     return {
+        "round_info": inputs.round_info.strip(),
+        "round_type": _round_type(a, inputs, default_source="transcripts"),
         "company": inputs.company.strip(),
         "designation": inputs.designation.strip(),
         "target_round": inputs.target_round.strip(),
@@ -511,6 +523,17 @@ def validate(a: dict, inputs: Inputs, n: int, valid_ids: list[str], extractions:
     }
 
 
+def _round_type(a: dict, inputs: Inputs, default_source: str) -> dict:
+    rt = a.get("round_type") or {}
+    label = _clean(rt.get("label", ""), 40)
+    source = (rt.get("source") or default_source).strip().lower()
+    if inputs.round_info.strip():
+        source = "round info"
+        if not label:
+            label = _clean(inputs.round_info, 40)
+    return {"label": label, "source": source}
+
+
 def _starred(items, key, limit, maxlen=80):
     out = []
     for it in items:
@@ -542,9 +565,23 @@ def _shared_sections(a: dict) -> dict:
 
 # ------------------------------------------------------------------ role-based mode
 ROLE_TASK = """
-Build every packet section for the target round from the company, designation, round, any JD /
-resume supplied, and your own knowledge of how this company interviews for this role and round
-(see ROLE-BASED MODE above):
+Build every packet section for the target round from the company, designation, round number,
+ROUND INFO, any JD / resume supplied, and your own knowledge of how this company interviews for this
+role and round (see ROLE-BASED MODE above).
+FIRST decide round_type: if ROUND INFO is supplied, use it (source "round info"); otherwise infer
+the round type from the round number (initial screen / round 1 / 2 / 3 / final) and this
+company's known interview process for this role (source "round number" or "company process").
+The round type then decides the question mix:
+- coding round: concrete coding/DSA problems (name the problem type, e.g. "Two-sum variant on a
+  stream", "LRU cache") plus technical follow-ups on complexity and edge cases;
+- technical screen: core technical concepts for the role plus one light coding/problem question;
+- system design round: design prompts relevant to this company's products and scale, plus
+  trade-off follow-ups;
+- behavioral / hiring manager / culture round: behavioral and ownership questions in this
+  company's known style (e.g. its leadership principles or values);
+- domain / case / product rounds: the case or domain questions typical for this role.
+Use the JD details (skills, tools, responsibilities) to make questions specific, and this
+company's known interview history and usual questions for this role.
 - topics: 6-8 topics this round is most likely to cover for this designation, with stars for
   expected emphasis and a short basis (JD line, resume item, or the role/round itself).
 - top_questions: 5-8 likely question patterns, concise and interview-ready, with stars.
@@ -568,6 +605,7 @@ def run_role_based(inputs: Inputs, llm, progress: Callable[[str], None] = lambda
     user = json.dumps({
         "company": inputs.company, "designation": inputs.designation,
         "target_round": inputs.target_round,
+        "round_info": inputs.round_info.strip() or "NOT PROVIDED",
         "job_description": inputs.jd[1] if inputs.jd else "NOT PROVIDED",
         "candidate_resume": inputs.resume[1] if inputs.resume else "NOT PROVIDED",
         "historical_interview_transcripts": "NOT PROVIDED",
@@ -588,7 +626,8 @@ def run_role_based(inputs: Inputs, llm, progress: Callable[[str], None] = lambda
 def validate_role(a: dict, inputs: Inputs) -> dict:
     shared = _shared_sections(a)
     has_resume, has_jd = inputs.resume is not None, inputs.jd is not None
-    parts = ["designation", "interview round"] + (["JD"] if has_jd else []) + (["resume"] if has_resume else [])
+    parts = (["designation", "interview round"] + (["round info"] if inputs.round_info.strip() else [])
+             + (["JD"] if has_jd else []) + (["resume"] if has_resume else []))
     source = (", ".join(parts[:-1]) + " and " + parts[-1] +
               f", plus the model's general knowledge of {inputs.company.strip()}'s interview style")
     topics = [{"name": _clean(t.get("name", ""), 60), "stars": _clamp_stars(t.get("stars")),
@@ -600,6 +639,8 @@ def validate_role(a: dict, inputs: Inputs) -> dict:
                  for q in a.get("top_questions", []) if _clean(q.get("question", ""), 130)]
     questions.sort(key=lambda q: -q["stars"])
     return {
+        "round_info": inputs.round_info.strip(),
+        "round_type": _round_type(a, inputs, default_source="round number"),
         "mode": "role",
         "source_label": source,
         "company": inputs.company.strip(),

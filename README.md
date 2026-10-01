@@ -22,12 +22,12 @@ The key is only read on the server; the browser never sees it. Set `OPENAI_MODEL
 
 Upload files → Generate → OpenAI analysis (with `prompt.txt`) → one-page PDF → preview → download PDF or ZIP.
 
-Inputs: company, designation and target round (required); optional interview dates; optional transcripts (PDF, TXT, VTT, SRT, DOCX, multiple); optional JD as pasted text, a file, or both; optional resume.
+Inputs: company, designation and target round (required); optional **round info** (free text describing the round type/format, e.g. "Coding round, 2 DSA problems"); optional interview dates; optional transcripts (PDF, TXT, VTT, SRT, DOCX, multiple); optional JD as pasted text, a file, or both; optional resume.
 
 ### Two modes
 
-- **Evidence-based** (transcripts supplied): everything in `prompt.txt` applies, including candidate-level counts like 7/10.
-- **Role-based** (no transcripts): the packet is predicted from the designation and round plus whatever JD/resume was given. `prompt.txt` is still sent, with an added note that its transcript rules can't apply. The page shows no counts or percentages; the header reads "ROLE-BASED | NO TRANSCRIPTS", section titles become "Expected round coverage" and "Likely questions", and the footer, Evidence_Matrix.csv and methodology all state that nothing was observed. QC verifies this labelling and that no counts appear.
+- **Evidence-based** (transcripts supplied): everything in `prompt.txt` applies, including candidate-level counts like 7/10. Priority: transcripts > round info > JD/resume > round number. Questions come only from the transcripts; round info decides which rank first (coding questions for a coding round, design questions for system design). The round number is a secondary hint and is not shown on the PDF; the header shows the round type ("from round info" or "inferred from transcripts").
+- **Role-based** (no transcripts): the model first decides the round type (from round info, or inferred from the round number and the company's known process), then builds a matching question mix (coding problems for coding rounds, design prompts for system design, behavioral for hiring-manager rounds), using the JD, resume and its knowledge of the company's usual questions for the role. `prompt.txt` is still sent, with an added note that its transcript rules can't apply. The page shows no counts or percentages; the header reads "ROLE-BASED | NO TRANSCRIPTS", section titles become "Expected round coverage" and "Likely questions", and the footer, Evidence_Matrix.csv and methodology all state that nothing was observed. QC verifies this labelling and that no counts appear.
 
 ## How `prompt.txt` is applied
 

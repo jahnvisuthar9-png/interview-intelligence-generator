@@ -39,6 +39,7 @@ class FakeLLM:
         if name == "role_based_packet":
             assert "ROLE-BASED MODE" in system and "NOT PROVIDED" in user
             assert "YOUR OWN KNOWLEDGE" in system and "Use only the supplied material" not in system
+            assert "FIRST decide round_type" in system and "round_info" in json.loads(user)
             return ROLE_RESPONSE
         payload = json.loads(user)
         groups = None
@@ -52,7 +53,8 @@ class FakeLLM:
         if "interview_rounds" in payload:  # aggregate stage: every field + round info must be present
             assert "TARGET ROUND" in system and "Use EVERY supplied input" in system
             evidence_key = "interviews" if name.endswith("single_pass") else "per_interview_extractions"
-            for k in ("company", "designation", "target_round", "interview_dates", "job_description",
+            assert "ROUND INFO" in system and "PRIORITY ORDER" in system
+            for k in ("company", "designation", "target_round", "round_info", "interview_dates", "job_description",
                       "candidate_resume", "interview_rounds", evidence_key):
                 assert k in payload, k
             if name.endswith("single_pass"):
@@ -126,6 +128,7 @@ class FakeLLM:
                              "Clarify assumptions before coding", "Quantify impact wherever possible"],
             },
             "caveats": ["Test data only."],
+            "round_type": {"label": "Technical screen", "source": "transcripts"},
             "interviews": [{"interview_id": i, "contains_real_interview_content": True,
                             "round_evidence": "Round 2", "date_evidence": ""} for i in ids],
             **({"groups": groups} if groups else {}),
@@ -163,6 +166,7 @@ ROLE_RESPONSE = {
                                        {"item": "RAG design out loud", "stars": 4}],
                  "remember": ["State your exact contribution", "Explain trade-offs, not just choices"]},
     "caveats": ["No transcripts supplied."],
+    "round_type": {"label": "Technical screen", "source": "round number"},
 }
 
 
@@ -203,6 +207,39 @@ def slow_paths():
     assert (len(first.calls), len(again.calls), len(changed.calls)) == (1, 0, 1)
     assert [t["count"] for t in p1["topics"]] == [t["count"] for t in p2["topics"]]
     build_all(p2, ROOT / "tests" / "out" / "cached")  # cached packet renders normally
+
+
+def round_info_cases():
+    """Round info drives round type; header hides the round number when transcripts exist."""
+    from pypdf import PdfReader
+    vtt = "WEBVTT\n\n00:00:01.000 --> 00:00:04.000\n<v Interviewer>Reverse a linked list {}</v>\n"
+    raw = [(f"Google-{n}-1.vtt", extract_text("x.vtt", vtt.format(n).encode())) for n in NAMES[:3]]
+
+    def header(packet, label):
+        out = build_all(packet, ROOT / "tests" / "out" / label)
+        assert all(c["passed"] for c in out["checks"]), [c for c in out["checks"] if not c["passed"]]
+        text = PdfReader(str(ROOT / "tests" / "out" / label / out["pdf"])).pages[0].extract_text()
+        return " ".join(text.split()[:20])
+
+    t_info = run(Inputs("Google", "AI/ML Engineer", "Round 2", raw, round_info="Coding round, 2 DSA problems"), FakeLLM())
+    h = header(t_info, "t_info")
+    print("transcripts + round info ->", t_info["round_type"], "| header:", h[:95])
+    assert t_info["round_type"]["source"] == "round info" and "Round 2" not in h and "(from round info)" in h
+
+    t_plain = run(Inputs("Google", "AI/ML Engineer", "Round 2", raw), FakeLLM())
+    h = header(t_plain, "t_plain")
+    print("transcripts only        ->", t_plain["round_type"], "| header:", h[:95])
+    assert "Round 2" not in h and "(inferred from transcripts)" in h
+
+    r_plain = run(Inputs("Google", "AI/ML Engineer", "Round 2", []), FakeLLM())
+    h = header(r_plain, "r_plain")
+    print("no transcripts          ->", r_plain["round_type"], "| header:", h[:95])
+    assert "Target: Round 2" in h and "(inferred)" in h
+
+    r_info = run(Inputs("Google", "AI/ML Engineer", "Round 2", [], round_info="System design"), FakeLLM())
+    h = header(r_info, "r_info")
+    print("no transcripts + info   ->", r_info["round_type"], "| header:", h[:95])
+    assert r_info["round_type"]["source"] == "round info" and "Target: Round 2" in h
 
 
 def role_mode():
@@ -251,4 +288,5 @@ def main():
 if __name__ == "__main__":
     main()
     slow_paths()
+    round_info_cases()
     role_mode()

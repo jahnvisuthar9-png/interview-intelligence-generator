@@ -66,6 +66,8 @@ STARS = {"type": "integer", "description": "1-5"}
 EVIDENCE_ITEM = _obj({"interview_id": S, "evidence": S})
 
 ANALYSIS_SCHEMA = _obj({
+    "round_type": _obj({"label": S, "source": {"type": "string", "enum": [
+        "round info", "transcripts", "round number", "company process"]}}),
     "topics": _arr(_obj({"name": S, "occurrences": _arr(EVIDENCE_ITEM)})),
     "top_questions": _arr(_obj({"question": S, "stars": STARS,
                                 "interview_ids": _arr(S), "why_prioritized": S})),
@@ -106,6 +108,8 @@ GROUP_AND_ANALYZE_SCHEMA = _obj(dict(SINGLE_PASS_SCHEMA["properties"], groups=_a
 
 # ---------- Role-based mode (no transcripts supplied) ----------
 ROLE_SCHEMA = _obj({
+    "round_type": _obj({"label": S, "source": {"type": "string", "enum": [
+        "round info", "transcripts", "round number", "company process"]}}),
     "topics": _arr(_obj({"name": S, "stars": STARS, "basis": S})),
     "top_questions": _arr(_obj({"question": S, "stars": STARS, "why_prioritized": S})),
     "resume_focus": _arr(_obj({"area": S, "stars": STARS, "basis": S})),
@@ -128,7 +132,8 @@ ROLE-BASED MODE (no historical transcripts supplied)
 The user supplied NO historical interview transcripts. The transcript-handling, frequency and
 candidate-count rules above therefore cannot be applied, and you must not pretend they were.
 Instead, build the same packet sections from the other fields: company, designation, target round,
-and the JD and/or candidate resume if present, combined with YOUR OWN KNOWLEDGE of how this
+ROUND INFO (the user's description of the round, when supplied), and the JD and/or candidate resume
+if present, combined with YOUR OWN KNOWLEDGE of how this
 company interviews for this role at this round (its known process, round structure, question
 style, focus areas and reported interview patterns for similar roles and rounds).
 - Questions must be what this company realistically asks in THIS round for THIS role, not
