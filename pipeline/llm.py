@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import time
 from pathlib import Path
 
 PROMPT_PATH = Path(__file__).resolve().parent.parent / "prompt.txt"
@@ -85,6 +87,23 @@ ANALYSIS_SCHEMA = _obj({
 })
 
 
+# ---------- Single pass: sections A-G plus per-interview facts in one call ----------
+SINGLE_PASS_SCHEMA = _obj(dict(ANALYSIS_SCHEMA["properties"], interviews=_arr(_obj({
+    "interview_id": S,
+    "contains_real_interview_content": B,
+    "round_evidence": S,
+    "date_evidence": S,
+}))))
+
+# ---------- One call that also groups files whose names have no candidate name ----------
+GROUP_AND_ANALYZE_SCHEMA = _obj(dict(SINGLE_PASS_SCHEMA["properties"], groups=_arr(_obj({
+    "interview_id": S,
+    "candidate_label": S,
+    "round_label": S,
+    "file_ids": _arr(S),
+    "reason": S,
+}))))
+
 # ---------- Role-based mode (no transcripts supplied) ----------
 ROLE_SCHEMA = _obj({
     "topics": _arr(_obj({"name": S, "stars": STARS, "basis": S})),
@@ -142,33 +161,132 @@ class LLMError(Exception):
     pass
 
 
+def _quota_kind(err: Exception) -> str:
+    """'daily' when a per-day quota is used up (retrying today is pointless), else 'minute'."""
+    text = str(err)
+    if re.search(r"PerDay|per[ _-]?day|RequestsPerDay|daily", text, re.I):
+        return "daily"
+    return "minute"
+
+
+def _retry_seconds(err: Exception, default: float = 20.0) -> float:
+    m = re.search(r"retry in ([0-9.]+)s|retryDelay['\"]?:\s*['\"]?([0-9.]+)s", str(err))
+    val = float(m.group(1) or m.group(2)) if m else default
+    return min(max(val, 1.0), 65.0)
+
+
+def _short(err: Exception, limit: int = 300) -> str:
+    msg = getattr(err, "message", None) or str(err)
+    msg = re.sub(r"\s+", " ", str(msg))
+    return msg[:limit] + ("…" if len(msg) > limit else "")
+
+
 class OpenAIClient:
+    """Calls any OpenAI-compatible API (OpenAI, Gemini, ...).
+
+    - Per-minute rate limits: waits the time the provider asks for (max ~1 min), then retries.
+    - Daily quota used up / model not available: moves on to the next model in
+      OPENAI_FALLBACK_MODELS instead of retrying something that cannot succeed today.
+    - Errors are turned into short, readable messages for the UI.
+    """
+
     def __init__(self, model: str | None = None):
         key = os.environ.get("OPENAI_API_KEY", "").strip()
         if not key:
-            raise LLMError("OPENAI_API_KEY is not set on the server.")
+            raise LLMError("No API key is set on the server (OPENAI_API_KEY).")
         from openai import OpenAI
 
+        # Retries are handled below so that daily-quota errors fail fast instead of hanging.
         self.client = OpenAI(api_key=key, timeout=float(os.environ.get("OPENAI_TIMEOUT", "300")),
-                             max_retries=int(os.environ.get("OPENAI_MAX_RETRIES", "6")))
+                             max_retries=0)
         self.model = model or os.environ.get("OPENAI_MODEL", "gpt-4.1")
+        fallbacks = [m.strip() for m in os.environ.get("OPENAI_FALLBACK_MODELS", "").split(",") if m.strip()]
+        self.models = [self.model] + [m for m in fallbacks if m != self.model]
+        self.max_retries = int(os.environ.get("OPENAI_MAX_RETRIES", "3"))
+        self._exhausted: set[str] = set()   # models whose daily quota ran out during this job
+        self.used_models: list[str] = []
+        self.events: list[str] = []
+
+    @property
+    def used_label(self) -> str:
+        return ", ".join(dict.fromkeys(self.used_models)) or self.model
+
+    def _call(self, model: str, system: str, user: str, schema: dict, name: str):
+        extra = {}
+        effort = os.environ.get("OPENAI_REASONING_EFFORT", "").strip()
+        if effort:  # optional speed knob; unset = model default (best quality)
+            extra["reasoning_effort"] = effort
+        return self.client.chat.completions.create(
+            **extra,
+            model=model,
+            messages=[{"role": "system", "content": system},
+                      {"role": "user", "content": user}],
+            response_format={"type": "json_schema",
+                             "json_schema": {"name": name, "strict": True, "schema": schema}},
+        )
 
     def structured(self, system: str, user: str, schema: dict, name: str) -> dict:
-        try:
-            resp = self.client.chat.completions.create(
-                model=self.model,
-                messages=[{"role": "system", "content": system},
-                          {"role": "user", "content": user}],
-                response_format={"type": "json_schema",
-                                 "json_schema": {"name": name, "strict": True, "schema": schema}},
-            )
-        except Exception as e:  # surface a readable message to the UI
-            raise LLMError(f"OpenAI request failed ({name}): {e}") from e
+        import openai
+
+        problems: list[str] = []
+        for model in self.models:
+            if model in self._exhausted:
+                continue
+            attempt = 0
+            while True:
+                try:
+                    resp = self._call(model, system, user, schema, name)
+                    break
+                except openai.RateLimitError as e:
+                    if _quota_kind(e) == "daily":
+                        self._exhausted.add(model)
+                        self.events.append(f"{model}: free daily limit reached; switched to the next model.")
+                        problems.append(f"{model}: daily limit reached")
+                        resp = None
+                        break
+                    attempt += 1
+                    if attempt > self.max_retries:
+                        problems.append(f"{model}: per-minute limit still reached after {self.max_retries} waits")
+                        resp = None
+                        break
+                    time.sleep(_retry_seconds(e))
+                except openai.NotFoundError as e:
+                    self._exhausted.add(model)
+                    self.events.append(f"{model}: model not available ({_short(e, 120)}).")
+                    problems.append(f"{model}: model name not found")
+                    resp = None
+                    break
+                except (openai.APIConnectionError, openai.APITimeoutError, openai.InternalServerError) as e:
+                    attempt += 1
+                    if attempt > self.max_retries:
+                        raise LLMError(f"The AI service did not respond ({name}): {_short(e)}") from e
+                    time.sleep(min(2 ** attempt, 20))
+                except openai.AuthenticationError as e:
+                    raise LLMError("The API key was rejected. Check OPENAI_API_KEY in Render > "
+                                   "Environment (copy it again with the copy button).") from e
+                except openai.APIStatusError as e:
+                    raise LLMError(f"The AI service returned an error ({name}): {_short(e)}") from e
+                except Exception as e:
+                    raise LLMError(f"AI request failed ({name}): {_short(e)}") from e
+            if resp is not None:
+                self.used_models.append(model)
+                return self._parse(resp, name)
+
+        if any("daily limit" in p for p in problems):
+            raise LLMError(
+                "The free daily limit is used up for: " + ", ".join(
+                    p.split(":")[0] for p in problems if "daily limit" in p) +
+                ". Google resets it at midnight Pacific time (about 12:30 PM India time). "
+                "To keep going today, add another model to OPENAI_FALLBACK_MODELS or enable billing.")
+        raise LLMError("No AI model could handle the request: " + "; ".join(problems))
+
+    @staticmethod
+    def _parse(resp, name: str) -> dict:
         choice = resp.choices[0]
         if getattr(choice.message, "refusal", None):
-            raise LLMError(f"OpenAI refused the {name} request: {choice.message.refusal}")
+            raise LLMError(f"The model refused the {name} request: {choice.message.refusal}")
         content = choice.message.content or ""
         try:
             return json.loads(content)
         except json.JSONDecodeError as e:
-            raise LLMError(f"OpenAI returned invalid JSON for {name}.") from e
+            raise LLMError(f"The model returned invalid JSON for {name}.") from e

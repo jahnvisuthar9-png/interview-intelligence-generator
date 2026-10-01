@@ -11,8 +11,9 @@ from typing import Callable
 from .grouping import InterviewGroup, TranscriptFile, build_files, finalize_groups, propose_groups
 import os
 
-from .llm import (ANALYSIS_SCHEMA, APP_ADDENDUM, EXTRACTION_SCHEMA, GROUPING_SCHEMA,
-                  ROLE_MODE_ADDENDUM, ROLE_SCHEMA, load_source_prompt)
+from .llm import (ANALYSIS_SCHEMA, APP_ADDENDUM, EXTRACTION_SCHEMA, GROUP_AND_ANALYZE_SCHEMA,
+                  GROUPING_SCHEMA, ROLE_MODE_ADDENDUM, ROLE_SCHEMA, SINGLE_PASS_SCHEMA,
+                  load_source_prompt)
 
 MAX_CHARS_PER_INTERVIEW = 600_000   # ~150k tokens; longer interviews are truncated with a note
 SNIPPET_HEAD, SNIPPET_TAIL = 1500, 400
@@ -96,6 +97,53 @@ caveats: data-quality limitations worth noting in the methodology (may be empty)
 """
 
 
+SINGLE_PASS_TASK = """
+Perform the ANALYSIS WORKFLOW and sections A-G in ONE pass over ALL merged candidate interviews
+supplied (each interview's transcript parts are already merged; ids C1, C2, ... are the UNIQUE
+CANDIDATE INTERVIEWS).
+Read every interview in full. Ignore casual setup conversation (audio checks, location,
+greetings, scheduling, camera, WhatsApp, connection issues, other non-interview talk). Focus on
+interviewer questions, follow-ups, probes, scenarios, technical discussions, behavioral probes
+and experience deep dives, and normalize semantically equivalent questions.
+Counts are computed by the app from the interview ids you list, so for EVERY topic and question
+check EVERY interview: a missed interview is a wrong count, and an id listed without real
+evidence is a false count.
+""" + AGGREGATE_TASK.replace("Perform sections A-G (CALCULATE THESE SECTIONS) across ALL merged candidate interviews, using the\nper-interview extractions supplied.", "") + """
+interviews: one entry per interview id with contains_real_interview_content (false only if the
+transcript has no interview questions at all), round_evidence (which round it was, e.g. "Round 2",
+"initial screen", "final", "hiring manager", from the text or file names, else "") and
+date_evidence (explicit date mentions only, else "").
+"""
+
+
+GROUP_AND_ANALYZE_TASK = """
+STEP 1 - GROUPING (steps 1-6 of the CRITICAL TRANSCRIPT-HANDLING RULE). You receive every
+transcript FILE (exact duplicates already removed) with a deterministic name/part parse and a
+proposed grouping. Some file names have no candidate name, so check the text (speaker names,
+introductions, content continuity). Return one group per UNIQUE CANDIDATE INTERVIEW in "groups",
+with interview ids C1, C2, ... in order. Treat suffixes such as -1, -2, (2), part 2 as parts of
+the same interview unless the text clearly proves separate rounds (then set round_label).
+Only merge files with different names when the text clearly shows the same candidate's
+interview. Every file must be in exactly one group.
+
+STEP 2 - ANALYSIS. Treat each group's files as one merged interview and use YOUR interview ids
+from step 1 everywhere below.
+""" + SINGLE_PASS_TASK.replace("""(each interview's transcript parts are already merged; ids C1, C2, ... are the UNIQUE
+CANDIDATE INTERVIEWS).""", """(the UNIQUE CANDIDATE INTERVIEWS are the groups you formed in step 1).""")
+
+
+def _remap_ids(a: dict, idmap: dict) -> dict:
+    """Translate the model's interview ids to the app's validated ids; unknown ids are dropped."""
+    for t in a.get("topics", []):
+        t["occurrences"] = [dict(o, interview_id=idmap[str(o.get("interview_id"))])
+                            for o in t.get("occurrences", []) if str(o.get("interview_id")) in idmap]
+    for q in a.get("top_questions", []):
+        q["interview_ids"] = [idmap[str(i)] for i in q.get("interview_ids", []) if str(i) in idmap]
+    a["interviews"] = [dict(m, interview_id=idmap[str(m.get("interview_id"))])
+                       for m in a.get("interviews", []) if str(m.get("interview_id")) in idmap]
+    return a
+
+
 # ------------------------------------------------------------------ helpers
 def _clamp_stars(v) -> int:
     try:
@@ -147,7 +195,58 @@ def _snippet(text: str) -> str:
 
 
 # ------------------------------------------------------------------ pipeline
-def run(inputs: Inputs, llm, progress: Callable[[str], None] = lambda m: None) -> dict:
+CACHE_VERSION = "3"  # bump when analysis logic changes so old cached results are not reused
+
+
+def cache_key(inputs: Inputs, llm) -> str:
+    """Fingerprint of everything that can change the answer: inputs, prompt.txt, model, logic version."""
+    import hashlib
+
+    blob = json.dumps({
+        "v": CACHE_VERSION,
+        "prompt": load_source_prompt(),
+        "model": getattr(llm, "model", ""),
+        "fallbacks": os.environ.get("OPENAI_FALLBACK_MODELS", ""),
+        "company": inputs.company.strip().lower(),
+        "designation": inputs.designation.strip().lower(),
+        "round": inputs.target_round.strip().lower(),
+        "dates": inputs.interview_dates.strip(),
+        "transcripts": sorted([n, t] for n, t in inputs.transcripts),
+        "jd": inputs.jd[1] if inputs.jd else None,
+        "resume": inputs.resume[1] if inputs.resume else None,
+    }, ensure_ascii=False, sort_keys=True)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+def run(inputs: Inputs, llm, progress: Callable[[str], None] = lambda m: None,
+        cache_dir=None) -> dict:
+    """Analyze, reusing an earlier result when the exact same inputs were already analyzed
+    (same files, fields, prompt.txt and model): a repeat costs zero API calls."""
+    from pathlib import Path
+
+    path = Path(cache_dir) / f"{cache_key(inputs, llm)}.json" if cache_dir else None
+    if path is not None and path.exists():
+        try:
+            packet = json.loads(path.read_text(encoding="utf-8"))
+            progress("Same inputs as an earlier run: reusing that analysis (no API call)")
+            packet["meta"]["notes"] = list(packet["meta"].get("notes", [])) + [
+                f"Reused the analysis from an identical earlier request ({packet['meta']['generated']}); "
+                "no new API call was made."]
+            packet["meta"]["generated"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+            return packet
+        except Exception:
+            pass  # unreadable cache entry: analyze normally
+    packet = _run(inputs, llm, progress)
+    if path is not None:
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(packet, ensure_ascii=False), encoding="utf-8")
+        except Exception:
+            pass
+    return packet
+
+
+def _run(inputs: Inputs, llm, progress: Callable[[str], None] = lambda m: None) -> dict:
     if not inputs.transcripts:
         return run_role_based(inputs, llm, progress)
     notes: list[str] = []
@@ -156,85 +255,162 @@ def run(inputs: Inputs, llm, progress: Callable[[str], None] = lambda m: None) -
         raise ValueError("No readable transcript files were uploaded.")
     proposal = propose_groups(files)
 
-    # ---- Stage 1: grouping review
-    progress("Grouping transcript parts by candidate")
-    grouping_payload = {
-        "company": inputs.company,
-        "files": [{
-            "file_id": f.file_id, "file_name": f.filename,
-            "parsed_candidate": f.proposed_candidate, "parsed_part_number": f.part_number,
-            "exact_duplicate_of": f.duplicate_of,
-            "text_preview": None if f.duplicate_of else _snippet(f.text),
-        } for f in files],
-        "deterministic_proposal": proposal,
-    }
-    grouping_source = "model-reviewed"
-    try:
-        g = llm.structured(_system(GROUPING_TASK), json.dumps(grouping_payload, ensure_ascii=False),
-                           GROUPING_SCHEMA, "transcript_grouping")
-        groups = finalize_groups(files, g.get("groups", []))
-        notes += [_clean(n, 300) for n in g.get("notes", []) if n]
-        group_reasons = {tuple(sorted(x.get("file_ids", []))): x.get("reason", "") for x in g.get("groups", [])}
-    except Exception as e:  # fall back to the deterministic proposal, never to file count
-        groups = finalize_groups(files, proposal)
-        grouping_source = "deterministic (model review failed)"
-        notes.append(f"Grouping review by the model failed ({e}); file-name grouping was used.")
-        group_reasons = {}
+    # ---- Grouping. Clear file names (Google-Sohan-1, Google-Sohan-2) are grouped by the prompt.txt
+    # rule directly. If some names are unclear, the model groups them INSIDE the single analysis
+    # call, so the packet still costs one call.
+    group_reasons: dict = {}
+    unnamed = [f for f in files if not f.duplicate_of and not f.proposed_candidate]
+    needs_review = bool(unnamed) or os.environ.get("ALWAYS_REVIEW_GROUPING") == "1"
+    usable_chars = sum(min(len(f.text), MAX_CHARS_PER_INTERVIEW) for f in files if not f.duplicate_of)
+    single_pass = usable_chars <= int(os.environ.get("SINGLE_PASS_MAX_CHARS", "800000"))
 
-    for grp in groups:
-        if len(grp.merged_text) > MAX_CHARS_PER_INTERVIEW:
-            grp.merged_text = grp.merged_text[:MAX_CHARS_PER_INTERVIEW]
-            notes.append(f"{grp.interview_id} transcript was truncated to {MAX_CHARS_PER_INTERVIEW:,} characters.")
-
-    # ---- Stage 2: per-interview extraction (parallel)
-    progress(f"Analyzing {len(groups)} candidate interview(s)")
-
-    def extract(grp: InterviewGroup) -> dict:
-        names = ", ".join(f.filename for f in files if f.file_id in grp.file_ids)
-        user = (f"Company: {inputs.company}\nDesignation: {inputs.designation}\n"
-                f"Target Round: {inputs.target_round}\nInterview id: {grp.interview_id}\n"
-                f"Transcript file names: {names}\n\n"
-                f"MERGED TRANSCRIPT:\n{grp.merged_text}")
-        out = llm.structured(_system(EXTRACTION_TASK), user, EXTRACTION_SCHEMA, "interview_extraction")
-        out["interview_id"] = grp.interview_id
-        return out
-
-    with ThreadPoolExecutor(max_workers=max(1, int(os.environ.get("MAX_PARALLEL_CALLS", "4")))) as pool:
-        extractions = list(pool.map(extract, groups))
-
-    kept_groups, kept_ex = [], []
-    for grp, ex in zip(groups, extractions):
-        if not ex.get("contains_real_interview_content") and not ex.get("questions"):
-            notes.append(f"{grp.interview_id} ({', '.join(grp.file_ids)}) contained no interview "
-                         "questions and was excluded from the denominator.")
-            continue
-        kept_groups.append(grp)
-        kept_ex.append(ex)
-    if not kept_groups:
-        raise ValueError("None of the uploaded transcripts contained interview questions.")
-    n = len(kept_groups)
-    valid_ids = [g.interview_id for g in kept_groups]
-
-    # ---- Stage 3: aggregate
-    progress("Calculating topics, questions and priorities")
     dates_supplied = bool(inputs.interview_dates.strip())
-    agg_user = json.dumps({
+    names_of = lambda grp: [f.filename for f in files if f.file_id in grp.file_ids]
+    common = {
         "company": inputs.company,
         "designation": inputs.designation,
         "target_round": inputs.target_round,
-        "unique_candidate_interviews": n,
-        "interview_ids": valid_ids,
         "interview_dates": inputs.interview_dates.strip() or "NOT PROVIDED",
         "job_description": inputs.jd[1] if inputs.jd else "NOT PROVIDED",
         "candidate_resume": inputs.resume[1] if inputs.resume else "NOT PROVIDED",
-        "interview_rounds": [{"interview_id": g.interview_id,
-                              "round_label_from_grouping": g.round_label or "unknown",
-                              "round_evidence_in_transcript": e.get("round_evidence") or "none",
-                              "file_names": [f.filename for f in files if f.file_id in g.file_ids]}
-                             for g, e in zip(kept_groups, kept_ex)],
-        "per_interview_extractions": kept_ex,
-    }, ensure_ascii=False)
-    a = llm.structured(_system(AGGREGATE_TASK), agg_user, ANALYSIS_SCHEMA, "interview_intelligence")
+    }
+
+    if single_pass and needs_review:
+        # ---- One call: group the files AND analyze them.
+        progress("Grouping and analyzing transcripts")
+        live = [f for f in files if not f.duplicate_of]
+        payload = dict(common, **{
+            "files": [{"file_id": f.file_id, "file_name": f.filename,
+                       "parsed_candidate": f.proposed_candidate or "UNKNOWN",
+                       "parsed_part_number": f.part_number,
+                       "text": f.text[:MAX_CHARS_PER_INTERVIEW]} for f in live],
+            "exact_duplicates_removed": [f.filename for f in files if f.duplicate_of],
+            "deterministic_proposal": proposal,
+        })
+        a = llm.structured(_system(GROUP_AND_ANALYZE_TASK), json.dumps(payload, ensure_ascii=False),
+                           GROUP_AND_ANALYZE_SCHEMA, "interview_intelligence_grouped")
+        model_groups = a.get("groups", [])
+        groups = finalize_groups(files, model_groups)   # validated: every file used exactly once
+        idmap = {}
+        for g in groups:
+            owner = next((mg for mg in model_groups if g.file_ids[0] in mg.get("file_ids", [])), None)
+            if owner is not None and str(owner.get("interview_id")) not in idmap:
+                idmap[str(owner.get("interview_id"))] = g.interview_id
+            else:
+                notes.append(f"{g.interview_id} ({', '.join(names_of(g))}) was not grouped by the model; "
+                             "it was kept as its own interview with no topic evidence.")
+        a = _remap_ids(a, idmap)
+        group_reasons = {tuple(sorted(x.get("file_ids", []))): x.get("reason", "") for x in model_groups}
+        grouping_source = "model-reviewed inside the analysis call (some file names had no candidate name)"
+    else:
+        if needs_review:  # large batch only: separate grouping call
+            progress("Grouping transcript parts by candidate")
+            grouping_payload = {
+                "company": inputs.company,
+                "files": [{
+                    "file_id": f.file_id, "file_name": f.filename,
+                    "parsed_candidate": f.proposed_candidate, "parsed_part_number": f.part_number,
+                    "exact_duplicate_of": f.duplicate_of,
+                    "text_preview": None if f.duplicate_of else _snippet(f.text),
+                } for f in files],
+                "deterministic_proposal": proposal,
+            }
+            grouping_source = "model-reviewed (some file names had no candidate name)"
+            try:
+                g = llm.structured(_system(GROUPING_TASK), json.dumps(grouping_payload, ensure_ascii=False),
+                                   GROUPING_SCHEMA, "transcript_grouping")
+                groups = finalize_groups(files, g.get("groups", []))
+                notes += [_clean(n, 300) for n in g.get("notes", []) if n]
+                group_reasons = {tuple(sorted(x.get("file_ids", []))): x.get("reason", "") for x in g.get("groups", [])}
+            except Exception as e:  # fall back to the deterministic proposal, never to file count
+                groups = finalize_groups(files, proposal)
+                grouping_source = "deterministic (model review failed)"
+                notes.append(f"Grouping review by the model failed ({e}); file-name grouping was used.")
+        else:
+            groups = finalize_groups(files, proposal)
+            grouping_source = "file names (every file had a clear candidate name, so no model review was needed)"
+
+        for grp in groups:
+            if len(grp.merged_text) > MAX_CHARS_PER_INTERVIEW:
+                grp.merged_text = grp.merged_text[:MAX_CHARS_PER_INTERVIEW]
+                notes.append(f"{grp.interview_id} transcript was truncated to {MAX_CHARS_PER_INTERVIEW:,} characters.")
+
+        if single_pass:
+            # ---- One call: read every merged interview and produce sections A-G with per-interview evidence.
+            progress(f"Analyzing {len(groups)} candidate interview(s)")
+            payload = dict(common, **{
+                "unique_candidate_interviews": len(groups),
+                "interview_ids": [g.interview_id for g in groups],
+                "interview_rounds": [{"interview_id": g.interview_id,
+                                      "round_label_from_grouping": g.round_label or "unknown",
+                                      "file_names": names_of(g)} for g in groups],
+                "interviews": [{"interview_id": g.interview_id, "file_names": names_of(g),
+                                "merged_transcript": g.merged_text} for g in groups],
+            })
+            a = llm.structured(_system(SINGLE_PASS_TASK), json.dumps(payload, ensure_ascii=False),
+                               SINGLE_PASS_SCHEMA, "interview_intelligence_single_pass")
+
+    total_chars = usable_chars
+    if single_pass:
+        meta = {str(m.get("interview_id")): m for m in a.get("interviews", [])}
+        kept_groups, kept_ex = [], []
+        for grp in groups:
+            m = meta.get(grp.interview_id, {})
+            if m and not m.get("contains_real_interview_content", True):
+                notes.append(f"{grp.interview_id} ({', '.join(names_of(grp))}) contained no interview "
+                             "questions and was excluded from the denominator.")
+                continue
+            kept_groups.append(grp)
+            kept_ex.append({"interview_id": grp.interview_id,
+                            "round_evidence": m.get("round_evidence", ""),
+                            "date_evidence": m.get("date_evidence", "")})
+        if not kept_groups:
+            raise ValueError("None of the uploaded transcripts contained interview questions.")
+        n = len(kept_groups)
+        valid_ids = [g.interview_id for g in kept_groups]
+        analysis_mode = "single pass (all interviews analyzed together in one model call)"
+    else:
+        # ---- Large batches: per-interview extraction, then aggregate.
+        progress(f"Analyzing {len(groups)} candidate interview(s) one by one (large batch)")
+
+        def extract(grp: InterviewGroup) -> dict:
+            user = (f"Company: {inputs.company}\nDesignation: {inputs.designation}\n"
+                    f"Target Round: {inputs.target_round}\nInterview id: {grp.interview_id}\n"
+                    f"Transcript file names: {', '.join(names_of(grp))}\n\n"
+                    f"MERGED TRANSCRIPT:\n{grp.merged_text}")
+            out = llm.structured(_system(EXTRACTION_TASK), user, EXTRACTION_SCHEMA, "interview_extraction")
+            out["interview_id"] = grp.interview_id
+            return out
+
+        with ThreadPoolExecutor(max_workers=max(1, int(os.environ.get("MAX_PARALLEL_CALLS", "4")))) as pool:
+            extractions = list(pool.map(extract, groups))
+
+        kept_groups, kept_ex = [], []
+        for grp, ex in zip(groups, extractions):
+            if not ex.get("contains_real_interview_content") and not ex.get("questions"):
+                notes.append(f"{grp.interview_id} ({', '.join(grp.file_ids)}) contained no interview "
+                             "questions and was excluded from the denominator.")
+                continue
+            kept_groups.append(grp)
+            kept_ex.append(ex)
+        if not kept_groups:
+            raise ValueError("None of the uploaded transcripts contained interview questions.")
+        n = len(kept_groups)
+        valid_ids = [g.interview_id for g in kept_groups]
+
+        progress("Calculating topics, questions and priorities")
+        agg_user = json.dumps(dict(common, **{
+            "unique_candidate_interviews": n,
+            "interview_ids": valid_ids,
+            "interview_rounds": [{"interview_id": g.interview_id,
+                                  "round_label_from_grouping": g.round_label or "unknown",
+                                  "round_evidence_in_transcript": e.get("round_evidence") or "none",
+                                  "file_names": names_of(g)}
+                                 for g, e in zip(kept_groups, kept_ex)],
+            "per_interview_extractions": kept_ex,
+        }), ensure_ascii=False)
+        a = llm.structured(_system(AGGREGATE_TASK), agg_user, ANALYSIS_SCHEMA, "interview_intelligence")
+        analysis_mode = f"per-interview extraction + aggregate ({total_chars:,} characters exceeded the one-call limit)"
 
     packet = validate(a, inputs, n, valid_ids, kept_ex, dates_supplied)
     packet["meta"].update({
@@ -246,11 +422,12 @@ def run(inputs: Inputs, llm, progress: Callable[[str], None] = lambda m: None) -
                     "reason": group_reasons.get(tuple(sorted(g.file_ids)), "")}
                    for g in kept_groups],
         "grouping_source": grouping_source,
-        "notes": notes + [_clean(c, 300) for c in a.get("caveats", []) if c],
+        "analysis_mode": analysis_mode,
+        "notes": notes + list(getattr(llm, "events", [])) + [_clean(c, 300) for c in a.get("caveats", []) if c],
         "rejected_files": inputs.rejected_files,
         "jd_file": inputs.jd[0] if inputs.jd else None,
         "resume_file": inputs.resume[0] if inputs.resume else None,
-        "model": getattr(llm, "model", "unknown"),
+        "model": getattr(llm, "used_label", None) or getattr(llm, "model", "unknown"),
     })
     return packet
 
@@ -399,11 +576,11 @@ def run_role_based(inputs: Inputs, llm, progress: Callable[[str], None] = lambda
     packet = validate_role(a, inputs)
     packet["meta"].update({
         "transcript_files": [], "duplicates": [], "groups": [], "grouping_source": "not applicable",
-        "notes": [_clean(c, 300) for c in a.get("caveats", []) if c],
+        "notes": list(getattr(llm, "events", [])) + [_clean(c, 300) for c in a.get("caveats", []) if c],
         "rejected_files": inputs.rejected_files,
         "jd_file": inputs.jd[0] if inputs.jd else None,
         "resume_file": inputs.resume[0] if inputs.resume else None,
-        "model": getattr(llm, "model", "unknown"),
+        "model": getattr(llm, "used_label", None) or getattr(llm, "model", "unknown"),
     })
     return packet
 

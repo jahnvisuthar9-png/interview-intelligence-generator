@@ -46,7 +46,12 @@ def _set(job_id: str, **kw):
 
 def _cleanup_old_jobs():
     now = time.time()
+    for f in (OUTPUT / "_cache").glob("*.json") if (OUTPUT / "_cache").exists() else []:
+        if now - f.stat().st_mtime > JOB_TTL_SECONDS:
+            f.unlink(missing_ok=True)
     for d in OUTPUT.iterdir():
+        if d.name == "_cache":
+            continue
         if d.is_dir() and now - d.stat().st_mtime > JOB_TTL_SECONDS:
             shutil.rmtree(d, ignore_errors=True)
             JOBS.pop(d.name, None)
@@ -60,7 +65,7 @@ def _read_upload(storage) -> tuple[str, str]:
 def _worker(job_id: str, inputs: Inputs):
     try:
         llm = OpenAIClient()
-        packet = run(inputs, llm, progress=lambda m: _set(job_id, stage=m))
+        packet = run(inputs, llm, progress=lambda m: _set(job_id, stage=m), cache_dir=OUTPUT / "_cache")
         _set(job_id, stage="Building and checking the one-page PDF")
         out = build_all(packet, OUTPUT / job_id)
         _set(job_id, status="done", stage="Done", result={

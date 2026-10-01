@@ -155,6 +155,8 @@ def methodology(packet: dict, checks: list[dict], fixes: list[str]) -> str:
     add(f"Number of unique candidates: {len({g['candidate'].lower() for g in m['groups']})}")
     add(f"Number of unique interview rounds (candidate interviews): {n}")
     add(f"Grouping method: {m['grouping_source']}")
+    if m.get("analysis_mode"):
+        add(f"Analysis method: {m['analysis_mode']}")
     add("Transcript files merged per candidate interview:")
     for i, g in enumerate(m["groups"], 1):
         rnd = f", {g['round']}" if g["round"] else ""

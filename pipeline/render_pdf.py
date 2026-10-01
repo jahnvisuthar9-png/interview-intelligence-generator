@@ -408,7 +408,7 @@ def render(packet: dict, out_path: str) -> dict:
     elif layout_height(packet, hi)[0] <= avail:
         scale = hi
     else:
-        for _ in range(18):
+        for _ in range(11):  # 0.34 / 2^11 < 0.0002 scale precision
             mid = (lo + hi) / 2
             if layout_height(packet, mid)[0] <= avail:
                 lo = mid

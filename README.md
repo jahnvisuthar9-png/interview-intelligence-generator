@@ -77,7 +77,22 @@ Renders the reference sample's exact content through the app and compares it wit
 | `OPENAI_MODEL` | `gpt-4.1` | Model name |
 | `OPENAI_BASE_URL` | OpenAI | Point at any OpenAI-compatible API, e.g. Gemini's `https://generativelanguage.googleapis.com/v1beta/openai/` |
 | `MAX_PARALLEL_CALLS` | `4` | Set to `1` on free tiers with low per-minute limits |
-| `OPENAI_MAX_RETRIES` | `6` | Retries with backoff when rate-limited |
+| `OPENAI_FALLBACK_MODELS` | none | Comma-separated models to switch to when the main model's daily quota runs out or its name isn't found, e.g. `gemini-3.5-flash-lite,gemini-3.1-flash-lite` |
+| `OPENAI_MAX_RETRIES` | `3` | Waits/retries for per-minute rate limits and brief outages. Daily-quota errors never wait; they switch model |
+| `SINGLE_PASS_MAX_CHARS` | `800000` | Transcript batches up to this size (about 30-40 interviews) are analyzed in ONE model call; larger batches use per-interview calls |
+| `ALWAYS_REVIEW_GROUPING` | off | Set to `1` to have the model review grouping (inside the same call) even when every file name has a candidate name |
+| `OPENAI_REASONING_EFFORT` | unset | Optional `low`/`medium`/`high`; lower is faster but may reduce depth. Unset keeps the model default |
+
+## API usage per packet
+
+| Packet | Model calls |
+|---|---|
+| No transcripts (role-based) | 1 |
+| Transcripts up to ~800,000 characters, clear or unclear file names | 1 (grouping, when needed, happens inside the same call) |
+| Exactly the same inputs as an earlier run (same files, fields, prompt.txt, model) | 0 (earlier analysis reused for 24 hours) |
+| Very large batches above the limit | 1 per interview + 1 (+1 if some names are unclear) |
+
+Counts are always computed in code from the per-interview evidence the model returns. No fallback model is set by default, so every packet comes from `OPENAI_MODEL`; set `OPENAI_FALLBACK_MODELS` only if you accept a lighter model when the main one's daily quota runs out.
 
 ## Notes
 

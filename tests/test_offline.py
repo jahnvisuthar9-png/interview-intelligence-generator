@@ -20,7 +20,11 @@ NAMES = ["Sohan", "Goutham", "Priya", "Arjun", "Meera", "Kiran", "Ravi", "Anita"
 class FakeLLM:
     model = "fake-offline"
 
+    def __init__(self):
+        self.calls = []
+
     def structured(self, system, user, schema, name):
+        self.calls.append(name)
         assert "CRITICAL TRANSCRIPT-HANDLING RULE" in system  # prompt.txt is always sent
         if name == "transcript_grouping":
             payload = json.loads(user)
@@ -37,11 +41,23 @@ class FakeLLM:
             assert "YOUR OWN KNOWLEDGE" in system and "Use only the supplied material" not in system
             return ROLE_RESPONSE
         payload = json.loads(user)
+        groups = None
+        if name == "interview_intelligence_grouped":  # grouping + analysis in one call
+            assert "STEP 1 - GROUPING" in system and "TARGET ROUND" in system
+            assert all(f["text"] for f in payload["files"])
+            groups = [{"interview_id": f"C{i}", "candidate_label": g["candidate_label"], "round_label": "",
+                       "file_ids": g["file_ids"], "reason": "test"}
+                      for i, g in enumerate(payload["deterministic_proposal"], 1)]
+            payload["interview_ids"] = [g["interview_id"] for g in groups]
         if "interview_rounds" in payload:  # aggregate stage: every field + round info must be present
             assert "TARGET ROUND" in system and "Use EVERY supplied input" in system
+            evidence_key = "interviews" if name.endswith("single_pass") else "per_interview_extractions"
             for k in ("company", "designation", "target_round", "interview_dates", "job_description",
-                      "candidate_resume", "interview_rounds", "per_interview_extractions"):
+                      "candidate_resume", "interview_rounds", evidence_key):
                 assert k in payload, k
+            if name.endswith("single_pass"):
+                assert all(i["merged_transcript"] for i in payload["interviews"])
+                assert "check EVERY interview" in system
             assert all("file_names" in r for r in payload["interview_rounds"])
         ids = payload["interview_ids"]
         occ = lambda k: [{"interview_id": i, "evidence": "asked"} for i in ids[:k]]
@@ -110,6 +126,9 @@ class FakeLLM:
                              "Clarify assumptions before coding", "Quantify impact wherever possible"],
             },
             "caveats": ["Test data only."],
+            "interviews": [{"interview_id": i, "contains_real_interview_content": True,
+                            "round_evidence": "Round 2", "date_evidence": ""} for i in ids],
+            **({"groups": groups} if groups else {}),
         }
 
 
@@ -147,6 +166,45 @@ ROLE_RESPONSE = {
 }
 
 
+def slow_paths():
+    """Large batch -> per-interview path; unnamed file -> grouping review. Same counts either way."""
+    import os
+    vtt = "WEBVTT\n\n00:00:01.000 --> 00:00:04.000\n<v Interviewer>Explain RAG {}</v>\n"
+    raw = [(f"Google-{n}-{p}.vtt", extract_text("x.vtt", vtt.format(n + str(p)).encode()))
+           for n in NAMES[:4] for p in (1, 2)]
+    os.environ["SINGLE_PASS_MAX_CHARS"] = "0"
+    llm = FakeLLM()
+    big = run(Inputs("Google", "AI/ML Engineer", "Round 2", raw), llm)
+    os.environ.pop("SINGLE_PASS_MAX_CHARS")
+    print("model calls (large batch):", len(llm.calls))
+    assert llm.calls.count("interview_extraction") == 4 and big["n"] == 4
+    llm2 = FakeLLM()
+    unnamed = run(Inputs("Google", "AI/ML Engineer", "Round 2", raw + [("transcript.txt", "Interviewer: hi")]), llm2)
+    print("model calls (unnamed file):", llm2.calls)
+    assert llm2.calls == ["interview_intelligence_grouped"] and unnamed["n"] == 5
+    assert unnamed["topics"][0]["count"] == 5  # model ids remapped onto validated ids
+    os.environ["SINGLE_PASS_MAX_CHARS"] = "0"
+    llm3 = FakeLLM()
+    run(Inputs("Google", "AI/ML Engineer", "Round 2", raw + [("transcript.txt", "Interviewer: hi")]), llm3)
+    os.environ.pop("SINGLE_PASS_MAX_CHARS")
+    print("model calls (unnamed + large batch):", len(llm3.calls))
+    assert llm3.calls[0] == "transcript_grouping"
+    fast = run(Inputs("Google", "AI/ML Engineer", "Round 2", raw), FakeLLM())
+    assert [t["count"] for t in fast["topics"]] == [t["count"] for t in big["topics"]]
+    # repeat request: identical inputs -> 0 calls; any change -> 1 call
+    import tempfile
+    cache = tempfile.mkdtemp()
+    inp = Inputs("Google", "AI/ML Engineer", "Round 2", raw)
+    first, again, changed = FakeLLM(), FakeLLM(), FakeLLM()
+    p1 = run(inp, first, cache_dir=cache)
+    p2 = run(inp, again, cache_dir=cache)
+    run(Inputs("Google", "AI/ML Engineer", "Round 3", raw), changed, cache_dir=cache)
+    print("model calls (first / identical repeat / changed round):", len(first.calls), len(again.calls), len(changed.calls))
+    assert (len(first.calls), len(again.calls), len(changed.calls)) == (1, 0, 1)
+    assert [t["count"] for t in p1["topics"]] == [t["count"] for t in p2["topics"]]
+    build_all(p2, ROOT / "tests" / "out" / "cached")  # cached packet renders normally
+
+
 def role_mode():
     cases = [
         ("role_only", Inputs("Google", "AI/ML Engineer", "Round 2", [])),
@@ -174,7 +232,10 @@ def main():
             raw.append((fname, extract_text(fname, vtt.format(f"{nm}{p}").encode())))
     raw.append(("Google-Sohan-1 (copy).vtt", raw[0][1]))  # exact duplicate export
     inp = Inputs("Google", "AI/ML Engineer", "Round 2", raw)
-    packet = run(inp, FakeLLM(), progress=print)
+    llm = FakeLLM()
+    packet = run(inp, llm, progress=print)
+    print("model calls (fast path):", len(llm.calls), llm.calls)
+    assert llm.calls == ["interview_intelligence_single_pass"]
     assert packet["n"] == 10, packet["n"]
     assert not packet["trend"]["chronological"], "trend must not be chronological without dates"
     assert all(q["count"] > 0 for q in packet["questions"])
@@ -189,4 +250,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+    slow_paths()
     role_mode()
